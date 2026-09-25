@@ -23,16 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added metatable fallback indexing for `_G` and `getfenv()` to return `MockEnv`, preventing nil dereference crashes when obfuscated closures dynamically query global Roblox instances (`game`, `workspace`, etc.).
 - **Expanded Test Suite**:
   - Added test suites `EngineSyntaxNormalizerTests` and `EngineConstantInlinerTests` to [`tests/test_engine.py`](tests/test_engine.py).
-  - Test suite expanded to **31 unit tests** (27 active tests, 4 local fixture tests).
+  - Test suite expanded to **33 unit tests** (29 active tests, 4 local fixture tests).
 
 ### Changed & Fixed
-- **Lua Sandbox Security Hardening**:
+- **Lua Sandbox Security Hardening & Recursion Prevention**:
   - Completely neutralized dangerous host OS/IO APIs (`io`, `package`, `os.execute`, `os.remove`, `os.rename`, `os.exit`, `os.tmpname`, `os.getenv`, `dofile`, `loadfile`) from both `MockEnv` and the root interpreter environment.
   - Replaced with strictly isolated `safe_os` (`os.clock`, `os.time`, `os.difftime`, `os.date`), dummy mocks for `io`/`package`, and enforced chunk environment isolation via `setfenv(1, MockEnv)`.
   - Restricted `safe_debug` to a strict whitelist of functions required for anti-tamper compatibility (`getinfo`, `getupvalue`, `sethook`, `traceback`).
-  - Added regression test `test_lua_sandbox_blocks_dangerous_os_and_io_apis` in `tests/test_deobfuscator.py`.
-- **Full Luau Type Annotation Stripping**:
-  - Upgraded `engine/syntax_normalizer.py` to comprehensively strip standalone type alias declarations (`type Foo = ...`, `export type Bar = ...`), function parameter annotations, multiple return types, and unassigned typed locals (`local x: Type`).
+  - Fixed `safe_debug` self-recursion by capturing host debug functions into dedicated local upvalues (`real_debug_getinfo`, `real_debug_getupvalue`, `real_debug_traceback`) prior to table construction.
+  - Added regression tests `test_lua_sandbox_blocks_dangerous_os_and_io_apis` and `test_lua_sandbox_safe_debug_without_recursion` in `tests/test_deobfuscator.py`.
+- **Luau Syntax Normalizer String/Comment Shielding & Full Type Stripping**:
+  - Upgraded `engine/syntax_normalizer.py` to mask comments and string literals with collision-safe identifier placeholders before transformations, guaranteeing raw strings and comments are never mutated.
+  - Added balanced-bracket extraction to cleanly strip multiline type alias tables (`type Foo = { ... }`) and handle complex nested function parameter annotations (`p: {x: number, y: string}`).
+  - Added test cases `test_type_stripping_preserves_literals_and_comments` and `test_preserve_string_literals_in_syntax_normalizer`.
 - **Python 3.9 Compatibility Fix**:
   - Added `from __future__ import annotations` and migrated from PEP 604 union pipes to `typing.Union` across `engine/ast_optimizer.py` and `engine/static_decoder.py`, resolving GitHub Actions CI import failures on Python 3.9.
 - **Strict Host Platform Enforcement**:
@@ -42,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added Python 3.9 to the GitHub Actions test matrix (`["3.9", "3.10", "3.11", "3.12"]`), ensuring full automated testing for all advertised Python versions.
 - **Documentation & Legal Attribution**:
   - Added formal upstream attribution for Prometheus by Elias Oelschner (`https://github.com/prometheus-lua/Prometheus`) to `README.md` and `README.ru.md`.
-  - Clarified test suite documentation and badges (31 unit tests with 27 active tests and 4 local fixture tests).
+  - Clarified test suite documentation and badges (33 unit tests with 29 active tests and 4 local fixture tests).
 
 ---
 

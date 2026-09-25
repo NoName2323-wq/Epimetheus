@@ -311,6 +311,29 @@ class DeobfuscatorRegressionTests(unittest.TestCase):
             self.assertNotIn("DANGEROUS", result.stdout)
             self.assertFalse(Path("/tmp/fail").exists())
 
+    def test_lua_sandbox_safe_debug_without_recursion(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_script = Path(tmp_dir) / "debug_test.lua"
+            test_script.write_text(
+                'local c = { [1] = "secret" }\n'
+                'return (function(arr)\n'
+                '    local info = debug.getinfo(1)\n'
+                '    local tb = debug.traceback("probe")\n'
+                '    local up = debug.getupvalue(function() end, 1)\n'
+                '    local p = game:GetService("Workspace")\n'
+                '    return arr[1]\n'
+                'end)(getfenv and getfenv() or _ENV)\n'
+            )
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "deobfuscator.py"), str(test_script)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            self.assertIn("game.GetService", result.stdout)
+            self.assertIn('"Workspace"', result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

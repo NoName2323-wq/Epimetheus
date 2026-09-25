@@ -7,7 +7,7 @@
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Платформа](https://img.shields.io/badge/Платформа-Только%20Linux-success?style=for-the-badge&logo=linux&logoColor=white)
 ![Лицензия](https://img.shields.io/badge/Лицензия-GNU%20GPLv3-yellow?style=for-the-badge)
-![Тесты](https://img.shields.io/badge/Тесты-31%20Модульный%20Тест-brightgreen?style=for-the-badge)
+![Тесты](https://img.shields.io/badge/Тесты-33%20Модульных%20Теста-brightgreen?style=for-the-badge)
 
 **Специализированный Linux-движок нового поколения для эмуляции трассировки, статического декодирования констант и AST-оптимизации обфусцированных скриптов Roblox Luau.**
 

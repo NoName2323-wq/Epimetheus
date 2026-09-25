@@ -201,7 +201,7 @@ def deobfuscate_file(filepath):
 
     content = normalize_luau_syntax(content)
 
-    match = re.search(r'local\s+([a-zA-Z0-9_]+)\s*=\s*\{\s*["\']', content)
+    match = re.search(r'local\s+([a-zA-Z0-9_]+)\s*=\s*\{\s*(?:\[\d+\]\s*=\s*)?["\']', content)
     if not match:
         print(f"Could not identify string table variable in {filepath}.")
         return
@@ -517,10 +517,14 @@ safe_string.dump = function(f)
     return string.dump(f)
 end
 
+local real_debug_getinfo = debug and debug.getinfo
+local real_debug_getupvalue = debug and debug.getupvalue
+local real_debug_traceback = debug and debug.traceback
+
 local safe_debug = {
     ["getinfo"] = function(f, ...)
-        if debug and debug.getinfo then
-            local info = debug.getinfo(f, ...)
+        if real_debug_getinfo then
+            local info = real_debug_getinfo(f, ...)
             if info then
                 if f == safe_string.char or f == safe_string.dump or f == pcall or f == xpcall then
                     info.what = "C"
@@ -538,8 +542,8 @@ local safe_debug = {
         if f == safe_string.char or f == safe_string.dump then
             return nil
         end
-        if debug and debug.getupvalue then
-            return debug.getupvalue(f, n)
+        if real_debug_getupvalue then
+            return real_debug_getupvalue(f, n)
         end
         return nil
     end,
@@ -548,8 +552,8 @@ local safe_debug = {
         return
     end,
     ["traceback"] = function(...)
-        if debug and debug.traceback then
-            return debug.traceback(...)
+        if real_debug_traceback then
+            return real_debug_traceback(...)
         end
         return ""
     end

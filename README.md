@@ -7,7 +7,7 @@
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Only-success?style=for-the-badge&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-yellow?style=for-the-badge)
-![Tests](https://img.shields.io/badge/Tests-31%20Unit%20Tests-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-33%20Unit%20Tests-brightgreen?style=for-the-badge)
 
 **Linux-exclusive next-generation trace emulation, static constant decoding, and AST-optimized deobfuscation engine for Prometheus-protected Roblox Luau scripts.**
 

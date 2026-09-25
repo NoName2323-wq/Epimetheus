@@ -231,20 +231,45 @@ class EngineSyntaxNormalizerTests(unittest.TestCase):
         code = (
             "type Point = { x: number, y: number }\n"
             "export type UserID = string\n"
+            "type MultilineConfig = {\n"
+            "    host: string,\n"
+            "    port: number,\n"
+            "}\n"
             "local x: number = 100\n"
             "local y: string? = 'abc'\n"
             "local z: Vector3\n"
             "function calculate(a: any, b: number): boolean return true end\n"
             "local function get_pair(k: string): (number, string) return 1, k end\n"
+            "function complex_param(p: {x: number, y: string}, count: number): boolean return true end\n"
         )
         normalized = normalize_luau_syntax(code)
         self.assertNotIn("type Point", normalized)
         self.assertNotIn("export type UserID", normalized)
+        self.assertNotIn("type MultilineConfig", normalized)
+        self.assertNotIn("host: string", normalized)
         self.assertIn("local x = 100", normalized)
         self.assertIn("local y = 'abc'", normalized)
         self.assertIn("local z\n", normalized)
         self.assertIn("function calculate(a, b) return true end", normalized)
         self.assertIn("local function get_pair(k) return 1, k end", normalized)
+        self.assertIn("function complex_param(p, count) return true end", normalized)
+
+    def test_type_stripping_preserves_literals_and_comments(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            'local s1 = "local x: number = 5"\n'
+            'local s2 = "function f(a: number): boolean"\n'
+            '-- local x: number = 5\n'
+            '--[[ function f(a: number): boolean ]]--\n'
+            'local x: number = 10\n'
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn('local s1 = "local x: number = 5"', normalized)
+        self.assertIn('local s2 = "function f(a: number): boolean"', normalized)
+        self.assertIn('-- local x: number = 5', normalized)
+        self.assertIn('--[[ function f(a: number): boolean ]]--', normalized)
+        self.assertIn('local x = 10', normalized)
 
 
 class EngineConstantInlinerTests(unittest.TestCase):
