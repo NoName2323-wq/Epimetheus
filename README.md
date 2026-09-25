@@ -118,6 +118,28 @@ Real-world test on production Prometheus-obfuscated scripts:
 
 ---
 
+## 🛠️ Installation & Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/NoName2323-wq/Epimetheus.git
+   cd Epimetheus
+   ```
+
+2. **Ensure executable permissions (POSIX):**
+   ```bash
+   chmod +x deobfuscator.py format_lua.py lua_bin/lua5.1
+   ```
+
+3. **Verify installation:**
+   ```bash
+   ./deobfuscator.py --version
+   # or run the automated test suite:
+   python3 -m unittest discover tests
+   ```
+
+---
+
 ## 💻 Usage
 
 ### Single File Deobfuscation

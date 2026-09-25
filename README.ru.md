@@ -118,6 +118,28 @@ flowchart TD
 
 ---
 
+## 🛠️ Установка и первый запуск
+
+1. **Клонируйте репозиторий:**
+   ```bash
+   git clone https://github.com/NoName2323-wq/Epimetheus.git
+   cd Epimetheus
+   ```
+
+2. **Убедитесь в наличии прав на выполнение:**
+   ```bash
+   chmod +x deobfuscator.py format_lua.py lua_bin/lua5.1
+   ```
+
+3. **Проверьте корректность установки:**
+   ```bash
+   ./deobfuscator.py --version
+   # или запустите набор тестов:
+   python3 -m unittest discover tests
+   ```
+
+---
+
 ## 💻 Использование
 
 ### Деобфускация одного файла
