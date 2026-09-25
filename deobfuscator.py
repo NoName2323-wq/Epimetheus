@@ -8,6 +8,7 @@ import glob
 import math
 import tempfile
 import shutil
+import functools
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engine.trace_filter import TraceFilter, filter_trace_lines
@@ -15,6 +16,7 @@ from engine.static_decoder import StaticConstantDecoder, decode_prometheus_const
 from engine.ast_optimizer import AstOptimizer, optimize_lua_code
 from engine.syntax_normalizer import normalize_luau_syntax, LuauSyntaxNormalizer
 from engine.constant_inliner import ConstantInliner, inline_constants_in_code
+import trace_to_lua
 
 
 COMPOUND_ASSIGNMENT_OPERATORS = ("+=", "-=", "*=", "/=", "%=", "^=", "..=")
@@ -29,6 +31,7 @@ def check_platform():
         )
 
 
+@functools.lru_cache(maxsize=1)
 def get_lua_executable():
     check_platform()
 
@@ -216,7 +219,7 @@ def deobfuscate_file(filepath):
         print(f"Could not identify string table variable in {filepath}.")
         return
     var_name = match.group(1)
-    static_constants = extract_static_constants(content, var_name)
+    static_constants = None
 
     mock_env_code = r"""
 local real_type = type
@@ -278,9 +281,11 @@ local function unpack(t, i, j)
             local success, res = pcall(real_concat, t, ",")
             if success then
                 print("CAPTURED CHUNK STRING: " .. res)
-                local url = res:match("https?://[%w%.%-%/%?%_%=%&%:]+") or res:match("www%.[%w%.%-%/%?%_%=%&%:]+")
-                if url then
-                    print("URL DETECTED IN UNPACK --> " .. url)
+                if res:find("http", 1, true) or res:find("www.", 1, true) then
+                    local url = res:match("https?://[%w%.%-%/%?%_%=%&%:]+") or res:match("www%.[%w%.%-%/%?%_%=%&%:]+")
+                    if url then
+                        print("URL DETECTED IN UNPACK --> " .. url)
+                    end
                 end
             end
         end
@@ -290,7 +295,7 @@ end
 
 local function table_concat(t, sep, i, j)
     local res = real_concat(t, sep, i, j)
-    if real_type(res) == "string" then
+    if real_type(res) == "string" and (res:find("http", 1, true) or res:find("www.", 1, true)) then
         local url = res:match("https?://[%w%.%-%/%?%_%=%&%:]+") or res:match("www%.[%w%.%-%/%?%_%=%&%:]+")
         if url then
             print("URL DETECTED IN CONCAT --> " .. url)
@@ -504,6 +509,20 @@ for k, v in pairs(string) do real_string[k] = v end
 
 for k, orig_func in pairs(real_string) do
     safe_string[k] = function(...)
+        local has_dummy = false
+        local n = select("#", ...)
+        for i = 1, n do
+            local a = select(i, ...)
+            if real_type(a) == "table" and getmetatable(a) and getmetatable(a).__is_mock_dummy then
+                has_dummy = true
+                break
+            end
+        end
+        if not has_dummy then
+            local ok, res = pcall(orig_func, ...)
+            if ok then return res end
+            return ""
+        end
         local args = {...}
         for i = 1, #args do
             if real_type(args[i]) == "table" and getmetatable(args[i]) and getmetatable(args[i]).__is_mock_dummy then
@@ -642,6 +661,31 @@ local safe_globals = {
     end
 }
 
+local exploit_funcs = {
+    ["getgc"] = true, ["getinstances"] = true, ["getnilinstances"] = true,
+    ["getloadedmodules"] = true, ["getconnections"] = true, ["firesignal"] = true, ["fireclickdetector"] = true,
+    ["firetouchinterest"] = true, ["isnetworkowner"] = true, ["gethiddenproperty"] = true, ["sethiddenproperty"] = true,
+    ["setsimulationradius"] = true, ["rconsoleprint"] = true, ["rconsolewarn"] = true, ["rconsoleerr"] = true,
+    ["rconsoleinfo"] = true, ["rconsolename"] = true, ["rconsoleclear"] = true, ["consoleprint"] = true, ["consolewarn"] = true,
+    ["consoleerr"] = true, ["consoleinfo"] = true, ["consolename"] = true, ["consoleclear"] = true, ["warn"] = true, ["print"] = true,
+    ["error"] = true, ["debug"] = true, ["clonefunction"] = true, ["hookfunction"] = true, ["newcclosure"] = true, ["replaceclosure"] = true,
+    ["restoreclosure"] = true, ["islclosure"] = true, ["iscclosure"] = true, ["checkcaller"] = true, ["getnamecallmethod"] = true,
+    ["setnamecallmethod"] = true, ["getrawmetatable"] = true, ["setrawmetatable"] = true, ["setreadonly"] = true,
+    ["isreadonly"] = true, ["iswindowactive"] = true, ["keypress"] = true, ["keyrelease"] = true, ["mouse1click"] = true,
+    ["mouse1press"] = true, ["mouse1release"] = true, ["mousescroll"] = true, ["mousemoverel"] = true, ["mousemoveabs"] = true,
+    ["hookmetamethod"] = true, ["getcallingscript"] = true, ["makefolder"] = true, ["writefile"] = true, ["readfile"] = true,
+    ["appendfile"] = true, ["loadfile"] = true, ["listfiles"] = true, ["isfile"] = true, ["isfolder"] = true, ["delfile"] = true,
+    ["delfolder"] = true, ["dofile"] = true, ["bit"] = true, ["bit32"] = true,
+    ["Vector2"] = true, ["Vector3"] = true, ["CFrame"] = true, ["UDim"] = true, ["UDim2"] = true, ["Color3"] = true, ["Instance"] = true, ["Ray"] = true,
+    ["Enum"] = true, ["BrickColor"] = true, ["NumberRange"] = true, ["NumberSequence"] = true, ["ColorSequence"] = true,
+    ["task"] = true, ["coroutine"] = true, ["Delay"] = true, ["delay"] = true, ["Spawn"] = true, ["spawn"] = true, ["Wait"] = true, ["wait"] = true,
+    ["workspace"] = true, ["Workspace"] = true, ["tick"] = true, ["time"] = true, ["elapsedTime"] = true, ["utf8"] = true,
+    ["setclipboard"] = true, ["toclipboard"] = true, ["set_clipboard"] = true, ["setrbxclipboard"] = true, ["getclipboard"] = true,
+    ["request"] = true, ["http_request"] = true, ["syn"] = true, ["HttpGet"] = true, ["HttpPost"] = true, ["http"] = true,
+    ["identifyexecutor"] = true, ["getexecutorname"] = true, ["Drawing"] = true, ["gethui"] = true, ["cloneref"] = true, ["clone_ref"] = true,
+    ["queue_on_teleport"] = true, ["syn_queue_on_teleport"] = true, ["queueonteleport"] = true
+}
+
 setmetatable(MockEnv, {
     __index = function(t, k)
         if safe_globals[k] then
@@ -656,35 +700,9 @@ setmetatable(MockEnv, {
             return function() return MockEnv end
         end
 
-        local exploit_funcs = {
-            "getgc", "getinstances", "getnilinstances",
-            "getloadedmodules", "getconnections", "firesignal", "fireclickdetector",
-            "firetouchinterest", "isnetworkowner", "gethiddenproperty", "sethiddenproperty",
-            "setsimulationradius", "rconsoleprint", "rconsolewarn", "rconsoleerr",
-            "rconsoleinfo", "rconsolename", "rconsoleclear", "consoleprint", "consolewarn",
-            "consoleerr", "consoleinfo", "consolename", "consoleclear", "warn", "print",
-            "error", "debug", "clonefunction", "hookfunction", "newcclosure", "replaceclosure",
-            "restoreclosure", "islclosure", "iscclosure", "checkcaller", "getnamecallmethod",
-            "setnamecallmethod", "getrawmetatable", "setrawmetatable", "setreadonly",
-            "isreadonly", "iswindowactive", "keypress", "keyrelease", "mouse1click",
-            "mouse1press", "mouse1release", "mousescroll", "mousemoverel", "mousemoveabs",
-            "hookmetamethod", "getcallingscript", "makefolder", "writefile", "readfile",
-            "appendfile", "loadfile", "listfiles", "isfile", "isfolder", "delfile",
-            "delfolder", "dofile", "bit", "bit32", 
-            "Vector2", "Vector3", "CFrame", "UDim", "UDim2", "Color3", "Instance", "Ray",
-            "Enum", "BrickColor", "NumberRange", "NumberSequence", "ColorSequence",
-            "task", "coroutine", "Delay", "delay", "Spawn", "spawn", "Wait", "wait", 
-            "workspace", "Workspace", "tick", "time", "elapsedTime", "utf8",
-            "setclipboard", "toclipboard", "set_clipboard", "setrbxclipboard", "getclipboard",
-            "request", "http_request", "syn", "HttpGet", "HttpPost", "http",
-            "identifyexecutor", "getexecutorname", "Drawing", "gethui", "cloneref", "clone_ref",
-            "queue_on_teleport", "syn_queue_on_teleport", "queueonteleport"
-        }
-        for _, name in ipairs(exploit_funcs) do
-            if k == name then
-                print("ACCESSED --> " .. k)
-                return create_dummy(k)
-            end
+        if exploit_funcs[k] then
+            print("ACCESSED --> " .. k)
+            return create_dummy(k)
         end
 
         -- 4. Fallback: Return NIL (to satisfy Fallback Path logic)
@@ -830,10 +848,6 @@ setfenv(1, MockEnv)
     stderr_text = ""
     if err:
         stderr_text = err.decode('utf-8', errors='replace')
-        if LUA_CONTROL_STRUCTURE_TOO_LONG in stderr_text and static_constants:
-            print("Lua 5.1 could not compile the full script; using static string-table fallback.")
-        elif stderr_text.strip():
-            print("STDERR:", stderr_text)
 
     constants_str = ""
     trace_lines = []
@@ -852,12 +866,24 @@ setfenv(1, MockEnv)
         elif any(prefix in line for prefix in RELEVANT_PREFIXES):
             trace_lines.append(line)
 
+    if not constants_str and LUA_CONTROL_STRUCTURE_TOO_LONG in stderr_text:
+        static_constants = extract_static_constants(content, var_name)
+        if static_constants:
+            print("Lua 5.1 could not compile the full script; using static string-table fallback.")
+            constants_str = static_constants + "\n"
+    elif stderr_text.strip():
+        if LUA_CONTROL_STRUCTURE_TOO_LONG in stderr_text:
+            static_constants = extract_static_constants(content, var_name)
+            if static_constants:
+                print("Lua 5.1 could not compile the full script; using static string-table fallback.")
+                if not constants_str:
+                    constants_str = static_constants + "\n"
+        else:
+            print("STDERR:", stderr_text)
+
     # Apply engine trace filter to compress VM loops and eliminate table unpack noise
     trace_filter = TraceFilter(max_consecutive_duplicates=5)
     filtered_trace_lines = trace_filter.filter_lines(trace_lines)
-
-    if not constants_str and LUA_CONTROL_STRUCTURE_TOO_LONG in stderr_text and static_constants:
-        constants_str = static_constants + "\n"
 
     report_file = filepath + ".report.txt"
     with open(report_file, 'w', encoding='utf-8') as f:
@@ -871,11 +897,16 @@ setfenv(1, MockEnv)
 
     print(f"Report saved to {report_file}")
 
+    deobf_path = filepath + ".deobf.lua"
+    const_path = filepath + ".constants.lua"
+
     try:
-        import trace_to_lua
-        import importlib
-        importlib.reload(trace_to_lua)
-        trace_to_lua.parse_trace(report_file)
+        trace_to_lua.parse_trace_lines(
+            filtered_trace_lines,
+            constants_str,
+            out_file_path=deobf_path,
+            const_file_path=const_path,
+        )
     except Exception as e:
         print(f"Failed to convert trace: {e}")
         import traceback
@@ -898,7 +929,7 @@ setfenv(1, MockEnv)
     #if os.path.exists(report_file):
     #    os.remove(report_file)
 
-VERSION = "2.6.0"
+VERSION = "2.7.0"
 
 
 def print_help():
@@ -912,6 +943,7 @@ Usage:
 Options:
   -h, --help                                 Display this help message and exit
   -v, --version                              Display version information and exit
+  -j, --jobs <N|auto>                        Parallel worker processes for batch processing (default: 1)
 
 Output:
   <name>.deobf.lua                           Reconstructed clean Lua source code
@@ -923,30 +955,70 @@ Output:
 def main():
     check_platform()
 
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
-        if arg in ("-h", "--help"):
-            print_help()
-            return
-        if arg in ("-v", "--version"):
-            print(f"Epimetheus v{VERSION} (Linux x86_64)")
-            return
-        target = arg
-    else:
-        target = "obfuscated_scripts"
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="deobfuscator.py",
+        description=f"⚡ Epimetheus v{VERSION} — Advanced Prometheus & Luau Deobfuscator Engine (Linux x86_64)",
+        add_help=False,
+    )
+    parser.add_argument("target", nargs="?", default="obfuscated_scripts", help="Lua script file or directory of scripts to deobfuscate")
+    parser.add_argument("-j", "--jobs", default=1, help="Number of parallel worker processes for batch processing (default: 1)")
+    parser.add_argument("-h", "--help", action="store_true", help="Display this help message and exit")
+    parser.add_argument("-v", "--version", action="store_true", help="Display version information and exit")
+
+    args, unknown = parser.parse_known_args()
+
+    if args.help:
+        print_help()
+        return
+
+    if args.version:
+        print(f"Epimetheus v{VERSION} (Linux x86_64)")
+        return
+
+    target = args.target
+
+    # Determine worker count
+    jobs = 1
+    if args.jobs:
+        if str(args.jobs).lower() in ("auto", "max"):
+            jobs = min(os.cpu_count() or 4, 4)
+        else:
+            try:
+                jobs = max(1, int(args.jobs))
+            except ValueError:
+                jobs = 1
 
     if os.path.isfile(target):
         deobfuscate_file(target)
     elif os.path.isdir(target):
         files = glob.glob(os.path.join(target, "*.lua"))
-        if not files:
+        valid_files = [
+            f for f in sorted(files)
+            if not ("temp_deob" in f or ".report.txt" in f or ".deobf." in f or ".constants." in f)
+        ]
+        if not valid_files:
             print(f"No .lua scripts found in directory: {target}")
             return
-        for file in sorted(files):
-            if "temp_deob" in file or ".report.txt" in file or ".deobf." in file or ".constants." in file:
-                continue
-            deobfuscate_file(file)
-            print("-" * 40)
+
+        if jobs > 1 and len(valid_files) > 1:
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+            max_workers = min(jobs, len(valid_files), os.cpu_count() or 4)
+            print(f"[*] Processing {len(valid_files)} files in parallel (jobs={max_workers})...\n")
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(deobfuscate_file, f): f for f in valid_files}
+                for fut in as_completed(futures):
+                    f = futures[fut]
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        print(f"[-] Error processing {f}: {e}")
+                    print("-" * 40)
+        else:
+            for file in valid_files:
+                deobfuscate_file(file)
+                print("-" * 40)
     else:
         if len(sys.argv) <= 1:
             print_help()

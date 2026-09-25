@@ -375,6 +375,42 @@ class DeobfuscatorRegressionTests(unittest.TestCase):
             self.assertIn("while true do", deobf)
             self.assertIn("Players", deobf)
 
+    def test_cli_version_flag(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "deobfuscator.py"), "-v"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Epimetheus v2.7.0", result.stdout)
+
+    def test_batch_parallel_jobs_flag(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_dir = Path(tmp_dir) / "scripts"
+            test_dir.mkdir()
+            for i in range(3):
+                content = (
+                    f'local c = {{ [1] = "secret_{i}" }}\n'
+                    'return (function(arr)\n'
+                    '    local p = game:GetService("Workspace")\n'
+                    '    return arr[1]\n'
+                    'end)(getfenv and getfenv() or _ENV)\n'
+                )
+                (test_dir / f"test_{i}.lua").write_text(content, encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "deobfuscator.py"), str(test_dir), "--jobs", "2"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            self.assertIn("Processing 3 files in parallel", result.stdout)
+            for i in range(3):
+                self.assertTrue((test_dir / f"test_{i}.lua.deobf.lua").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
+
