@@ -105,6 +105,16 @@ def extract_static_constants(content, var_name):
         return ""
 
     lua_code = r'''
+local safe_env = {
+    ipairs = ipairs, pairs = pairs, string = string, table = table,
+    tonumber = tonumber, tostring = tostring, type = type, print = print,
+    select = select, unpack = unpack, math = math, pcall = pcall,
+}
+if setfenv then
+    setfenv(1, safe_env)
+end
+os = nil io = nil package = nil dofile = nil loadfile = nil debug = nil
+
 local function escape_lua_string(s)
     local parts = {'"'}
     for i = 1, #s do
@@ -219,7 +229,7 @@ local print = real_print
 
 local _WAIT_COUNT = 0
 local _LOOP_COUNTER = 0
-local _MAX_LOOPS = 150
+local _MAX_LOOPS = tonumber((os and os.getenv and os.getenv("LUA_MAX_SBX")) or "150") or 150
 local _LOOP_BODIES = {}
 
 local function _check_loop()
@@ -254,6 +264,9 @@ local function tonumber(v, base)
 end
 
 local function unpack(t, i, j)
+    if not _check_loop() then
+        return real_unpack(t, i, j)
+    end
     if real_type(t) == "table" then
         local looks_like_chunk = true
         for k, v in pairs(t) do

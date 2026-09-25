@@ -293,7 +293,7 @@ def parse_trace(report_file):
     if loop_info:
         pattern_len, repeat_count, pattern_lines = loop_info
         lua_lines.append(f"-- Loop detected: {repeat_count} iterations")
-        lua_lines.append(f"while true do")
+        lua_lines.append("while true do")
 
         for raw_line in pattern_lines:
             clean_line = process_call_line(raw_line, var_map, var_counter, used_vars)
@@ -303,87 +303,18 @@ def parse_trace(report_file):
         lua_lines.append("end")
         lua_lines.append("")
 
-        loop_end_idx = pattern_len * repeat_count
-        remaining_ops = [op for i, op in enumerate(operations)
-                        if not (op["type"] == "call" and op["depth"] == 0 and
-                               operations.index(op) < loop_end_idx * (len(operations) / len(top_level_calls) if top_level_calls else 1))]
+        last_loop_call = top_level_calls[pattern_len * repeat_count - 1]
+        last_loop_idx = -1
+        for idx, op in enumerate(operations):
+            if op is last_loop_call:
+                last_loop_idx = idx
+                break
+
+        remaining_ops = operations[last_loop_idx + 1:] if last_loop_idx != -1 else []
+        if remaining_ops:
+            lua_lines.extend(render_trace_operations(remaining_ops, var_map, var_counter, used_vars))
     else:
-        closure_info_stack = []
-        i = 0
-        while i < len(operations):
-            op = operations[i]
-            in_closure = len(closure_info_stack)
-            indent = "    " * in_closure
-
-            if op["type"] == "call":
-                clean_line = process_call_line(op["raw"], var_map, var_counter, used_vars)
-                if clean_line:
-                    skip = False
-                    CONSTRUCTOR_PREFIXES = ("UDim2.new", "UDim.new", "Color3.fromRGB", "Color3.new",
-                                           "Vector3.new", "Vector2.new", "CFrame.new",
-                                           "BrickColor.new", "NumberRange.new", "NumberSequence.new",
-                                           "ColorSequence.new")
-                    if any(clean_line.startswith(p) for p in CONSTRUCTOR_PREFIXES) and not clean_line.startswith("local "):
-                        skip = True
-                    elif any(clean_line.startswith(p) for p in CONSTRUCTOR_PREFIXES):
-                        if i + 1 < len(operations) and operations[i+1]["type"] == "prop_set":
-                            next_raw = operations[i+1]["raw"]
-                            if clean_line in next_raw or clean_line.split("(")[0] in next_raw:
-                                skip = True
-
-                    if not skip:
-                        if i + 1 < len(operations) and operations[i+1]["type"] == "closure_start":
-                            if clean_line.endswith("function(...) end)"):
-                                clean_line = clean_line[:-len("function(...) end)")] + "function(...)"
-                                operations[i+1]["inline_close"] = "end)"
-                            elif clean_line.endswith("function(...) end"):
-                                clean_line = clean_line[:-len("function(...) end")] + "function(...)"
-                                operations[i+1]["inline_close"] = "end"
-                        lua_lines.append(f"{indent}{clean_line}")
-
-            elif op["type"] == "set_global":
-                clean_line = process_set_global(op["raw"], var_map)
-                if clean_line:
-                    if i + 1 < len(operations) and operations[i+1]["type"] == "closure_start":
-                        if clean_line.endswith("function(...) end"):
-                            clean_line = clean_line[:-len("function(...) end")] + "function(...)"
-                            operations[i+1]["inline_close"] = "end"
-                    lua_lines.append(f"{indent}{clean_line}")
-
-            elif op["type"] == "print":
-                msg = op["raw"].replace('\\', '\\\\').replace('"', '\\"')
-                lua_lines.append(f'{indent}print("{msg}")')
-
-            elif op["type"] == "url":
-                lua_lines.append(f'{indent}-- URL: {op["raw"]}')
-
-            elif op["type"] == "prop_set":
-                clean_line = process_prop_set(op["raw"], var_map)
-                if clean_line:
-                    lua_lines.append(f"{indent}{clean_line}")
-
-            elif op["type"] == "closure_start":
-                inline_close = op.get("inline_close")
-                if inline_close is not None:
-                    closure_info_stack.append(inline_close)
-                else:
-                    closure_name = op["name"]
-                    lua_lines.append(f"{indent}-- Closure for {closure_name}")
-                    lua_lines.append(f"{indent}local function callback(...)")
-                    closure_info_stack.append("end")
-
-            elif op["type"] == "closure_end":
-                if closure_info_stack:
-                    close_str = closure_info_stack.pop()
-                else:
-                    close_str = "end"
-                indent_inner = "    " * len(closure_info_stack)
-                lua_lines.append(f"{indent_inner}{close_str}")
-
-            elif op["type"] == "loadstring":
-                lua_lines.append(f"{indent}-- {op['raw']}")
-
-            i += 1
+        lua_lines.extend(render_trace_operations(operations, var_map, var_counter, used_vars))
 
     output_lines = ["-- Deobfuscated via Trace Emulation", ""]
 
@@ -548,6 +479,90 @@ def process_set_global(raw, var_map):
 def process_prop_set(raw, var_map):
     resolved = resolve_vars(raw, var_map)
     return resolved
+
+
+def render_trace_operations(operations, var_map, var_counter, used_vars):
+    lua_lines = []
+    closure_info_stack = []
+    i = 0
+    while i < len(operations):
+        op = operations[i]
+        in_closure = len(closure_info_stack)
+        indent = "    " * in_closure
+
+        if op["type"] == "call":
+            clean_line = process_call_line(op["raw"], var_map, var_counter, used_vars)
+            if clean_line:
+                skip = False
+                CONSTRUCTOR_PREFIXES = (
+                    "UDim2.new", "UDim.new", "Color3.fromRGB", "Color3.new",
+                    "Vector3.new", "Vector2.new", "CFrame.new",
+                    "BrickColor.new", "NumberRange.new", "NumberSequence.new",
+                    "ColorSequence.new",
+                )
+                if any(clean_line.startswith(p) for p in CONSTRUCTOR_PREFIXES) and not clean_line.startswith("local "):
+                    skip = True
+                elif any(clean_line.startswith(p) for p in CONSTRUCTOR_PREFIXES):
+                    if i + 1 < len(operations) and operations[i + 1]["type"] == "prop_set":
+                        next_raw = operations[i + 1]["raw"]
+                        if clean_line in next_raw or clean_line.split("(")[0] in next_raw:
+                            skip = True
+
+                if not skip:
+                    if i + 1 < len(operations) and operations[i + 1]["type"] == "closure_start":
+                        if clean_line.endswith("function(...) end)"):
+                            clean_line = clean_line[:-len("function(...) end)")] + "function(...)"
+                            operations[i + 1]["inline_close"] = "end)"
+                        elif clean_line.endswith("function(...) end"):
+                            clean_line = clean_line[:-len("function(...) end")] + "function(...)"
+                            operations[i + 1]["inline_close"] = "end"
+                    lua_lines.append(f"{indent}{clean_line}")
+
+        elif op["type"] == "set_global":
+            clean_line = process_set_global(op["raw"], var_map)
+            if clean_line:
+                if i + 1 < len(operations) and operations[i + 1]["type"] == "closure_start":
+                    if clean_line.endswith("function(...) end"):
+                        clean_line = clean_line[:-len("function(...) end")] + "function(...)"
+                        operations[i + 1]["inline_close"] = "end"
+                lua_lines.append(f"{indent}{clean_line}")
+
+        elif op["type"] == "print":
+            msg = op["raw"].replace("\\", "\\\\").replace('"', '\\"')
+            lua_lines.append(f'{indent}print("{msg}")')
+
+        elif op["type"] == "url":
+            lua_lines.append(f'{indent}-- URL: {op["raw"]}')
+
+        elif op["type"] == "prop_set":
+            clean_line = process_prop_set(op["raw"], var_map)
+            if clean_line:
+                lua_lines.append(f"{indent}{clean_line}")
+
+        elif op["type"] == "closure_start":
+            inline_close = op.get("inline_close")
+            if inline_close is not None:
+                closure_info_stack.append(inline_close)
+            else:
+                closure_name = op["name"]
+                lua_lines.append(f"{indent}-- Closure for {closure_name}")
+                lua_lines.append(f"{indent}local function callback(...)")
+                closure_info_stack.append("end")
+
+        elif op["type"] == "closure_end":
+            if closure_info_stack:
+                close_str = closure_info_stack.pop()
+            else:
+                close_str = "end"
+            indent_inner = "    " * len(closure_info_stack)
+            lua_lines.append(f"{indent_inner}{close_str}")
+
+        elif op["type"] == "loadstring":
+            lua_lines.append(f"{indent}-- {op['raw']}")
+
+        i += 1
+
+    return lua_lines
 
 
 def postprocess_output(output):

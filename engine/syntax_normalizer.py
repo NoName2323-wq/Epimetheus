@@ -158,6 +158,7 @@ def _find_compound_rhs_end(content: str, rhs_start: int) -> int:
     paren_depth = 0
     brace_depth = 0
     quote = None
+    expecting_operand = True
 
     while idx < length and content[idx].isspace():
         idx += 1
@@ -171,6 +172,7 @@ def _find_compound_rhs_end(content: str, rhs_start: int) -> int:
                 continue
             if char == quote:
                 quote = None
+                expecting_operand = False
             idx += 1
             continue
 
@@ -183,21 +185,62 @@ def _find_compound_rhs_end(content: str, rhs_start: int) -> int:
             bracket_depth += 1
         elif char == "]":
             bracket_depth = max(0, bracket_depth - 1)
+            if bracket_depth == 0 and paren_depth == 0 and brace_depth == 0:
+                expecting_operand = False
         elif char == "(":
             paren_depth += 1
         elif char == ")":
             if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
                 break
             paren_depth = max(0, paren_depth - 1)
+            if bracket_depth == 0 and paren_depth == 0 and brace_depth == 0:
+                expecting_operand = False
         elif char == "{":
             brace_depth += 1
         elif char == "}":
             if brace_depth == 0 and bracket_depth == 0 and paren_depth == 0:
                 break
             brace_depth = max(0, brace_depth - 1)
+            if bracket_depth == 0 and paren_depth == 0 and brace_depth == 0:
+                expecting_operand = False
         elif bracket_depth == 0 and paren_depth == 0 and brace_depth == 0:
-            if char in ";,\n\r" or char.isspace():
+            if char in ";,\n\r":
                 break
+            if char.isspace():
+                if expecting_operand:
+                    idx += 1
+                    continue
+                # After operand, check if next non-space is a continuing binary operator
+                look = idx
+                while look < length and content[look].isspace():
+                    if content[look] in "\n\r":
+                        break
+                    look += 1
+                if look >= length or content[look] in ";,\n\r":
+                    break
+                rest = content[look:]
+                is_binop = False
+                op_len = 0
+                for op in ("..", "==", "~=", "<=", ">=", "+", "-", "*", "/", "%", "^", "<", ">"):
+                    if rest.startswith(op) and not rest.startswith("--"):
+                        is_binop = True
+                        op_len = len(op)
+                        break
+                if not is_binop:
+                    m_kw = re.match(r"^(?:and|or)\b", rest)
+                    if m_kw:
+                        is_binop = True
+                        op_len = len(m_kw.group(0))
+
+                if not is_binop:
+                    break
+                else:
+                    expecting_operand = True
+                    idx = look + op_len
+                    continue
+            else:
+                if char.isalnum() or char in ("_", "."):
+                    expecting_operand = False
 
         idx += 1
 
@@ -351,192 +394,9 @@ def _clean_function_parameters(param_str: str) -> str:
     return ", ".join(clean_params)
 
 
-def _strip_function_type_annotations(code: str) -> str:
-    """
-    Strips Luau parameter, generic, and return type annotations from function definitions:
-        function foo<T>(a: any, b: {x: {y: string}}): {x: {y: string}} -> function foo(a, b)
-    Supports multiline parameters, generic type arguments, and arbitrarily nested return types.
-    """
-    pattern = re.compile(r"\bfunction(\s+[a-zA-Z0-9_.:]+)?(?:\s*<[^>]*>)?\s*\(")
-    result = []
-    last_idx = 0
-    length = len(code)
-
-    while True:
-        m = pattern.search(code, last_idx)
-        if not m:
-            result.append(code[last_idx:])
-            break
-
-        func_start = m.start()
-        fn_name = m.group(1) or ""
-        result.append(code[last_idx:func_start])
-
-        # Scan parameters inside balanced (...)
-        param_start = m.end()  # right after '('
-        idx = param_start
-        paren_depth = 1
-        brace_depth = 0
-        bracket_depth = 0
-        angle_depth = 0
-
-        while idx < length and paren_depth > 0:
-            ch = code[idx]
-            if ch == '(':
-                paren_depth += 1
-            elif ch == ')':
-                paren_depth -= 1
-                if paren_depth == 0:
-                    break
-            elif ch == '{':
-                brace_depth += 1
-            elif ch == '}':
-                brace_depth = max(0, brace_depth - 1)
-            elif ch == '[':
-                bracket_depth += 1
-            elif ch == ']':
-                bracket_depth = max(0, bracket_depth - 1)
-            elif ch == '<':
-                angle_depth += 1
-            elif ch == '>':
-                angle_depth = max(0, angle_depth - 1)
-            idx += 1
-
-        raw_params = code[param_start:idx]
-        cleaned_params = _clean_function_parameters(raw_params)
-        result.append(f"function{fn_name}({cleaned_params})")
-
-        # Now idx is pointing at the closing ')' of the parameter list
-        idx += 1  # move past ')'
-
-        # Check if there is a return type annotation: `:`
-        look = idx
-        while look < length and code[look].isspace():
-            look += 1
-
-        if look < length and code[look] == ':':
-            idx = look + 1
-            while idx < length and code[idx].isspace():
-                idx += 1
-
-            if idx < length and code[idx] == '{':
-                brace_depth = 1
-                idx += 1
-                while idx < length and brace_depth > 0:
-                    if code[idx] == '{':
-                        brace_depth += 1
-                    elif code[idx] == '}':
-                        brace_depth -= 1
-                    idx += 1
-            elif idx < length and code[idx] == '(':
-                paren_depth = 1
-                idx += 1
-                while idx < length and paren_depth > 0:
-                    if code[idx] == '(':
-                        paren_depth += 1
-                    elif code[idx] == ')':
-                        paren_depth -= 1
-                    idx += 1
-            else:
-                angle_depth = 0
-                while idx < length:
-                    ch = code[idx]
-                    if ch == '<':
-                        angle_depth += 1
-                    elif ch == '>':
-                        angle_depth = max(0, angle_depth - 1)
-                    elif angle_depth == 0:
-                        if ch.isspace() or ch in (';', '\n', '\r'):
-                            break
-                        if not (ch.isalnum() or ch in ('_', '.', '?', '|', '&', '~')):
-                            break
-                    idx += 1
-
-        last_idx = idx
-
-    return "".join(result)
-
-
-def _strip_local_type_annotations(code: str) -> str:
-    """
-    Strips type annotations from local variables:
-        local x: number = 10 -> local x = 10
-        local z: Vector3 -> local z
-        local cb: (amount: number) -> number -> local cb
-        local f: <T>(T) -> T = func -> local f = func
-    """
-    pattern = re.compile(r"\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:(?!:)")
-    result = []
-    last_idx = 0
-    length = len(code)
-
-    while True:
-        m = pattern.search(code, last_idx)
-        if not m:
-            result.append(code[last_idx:])
-            break
-
-        var_name = m.group(1)
-        start_pos = m.start()
-        result.append(code[last_idx:start_pos])
-
-        idx = m.end()
-        paren_depth = 0
-        brace_depth = 0
-        bracket_depth = 0
-        angle_depth = 0
-
-        while idx < length:
-            ch = code[idx]
-            if ch == '(':
-                paren_depth += 1
-            elif ch == ')':
-                paren_depth = max(0, paren_depth - 1)
-            elif ch == '{':
-                brace_depth += 1
-            elif ch == '}':
-                brace_depth = max(0, brace_depth - 1)
-            elif ch == '[':
-                bracket_depth += 1
-            elif ch == ']':
-                bracket_depth = max(0, bracket_depth - 1)
-            elif ch == '<':
-                angle_depth += 1
-            elif ch == '>':
-                angle_depth = max(0, angle_depth - 1)
-            elif paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
-                if ch == '=':
-                    result.append(f"local {var_name} =")
-                    idx += 1
-                    break
-                elif ch in (';', '\n', '\r'):
-                    result.append(f"local {var_name}")
-                    break
-                elif ch in (" ", "\t"):
-                    look = idx
-                    while look < length and code[look] in (" ", "\t"):
-                        look += 1
-                    if look < length and code[look] == '=':
-                        result.append(f"local {var_name} =")
-                        idx = look + 1
-                        break
-                    elif look >= length or code[look] in (';', '\n', '\r'):
-                        result.append(f"local {var_name}")
-                        idx = look
-                        break
-            idx += 1
-
-        if idx >= length and (paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0):
-            result.append(f"local {var_name}")
-
-        last_idx = idx
-
-    return "".join(result)
-
-
 def _consume_luau_type(code: str, start_idx: int) -> int:
     """
-    Consumes a Luau type expression starting at start_idx (immediately after '::').
+    Consumes a Luau type expression starting at start_idx.
     Properly handles:
         - Function types: (number) -> string, (string, number) -> boolean, () -> ()
         - Generic functions and types: <T>(T) -> T, Array<Map<string, number>>
@@ -561,7 +421,7 @@ def _consume_luau_type(code: str, start_idx: int) -> int:
     while idx < length:
         ch = code[idx]
 
-        # Check closing delimiters that may match an outer expression opened before '::'
+        # Check closing delimiters that may match an outer expression
         if ch == ')':
             if paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
                 break
@@ -661,6 +521,174 @@ def _consume_luau_type(code: str, start_idx: int) -> int:
         break
 
     return idx
+
+
+def _strip_function_type_annotations(code: str) -> str:
+    """
+    Strips Luau parameter, generic, and return type annotations from function definitions:
+        function foo<T>(a: any, b: {x: {y: string}}): {x: {y: string}} -> function foo(a, b)
+        function foo(): (number) -> string -> function foo()
+    Supports multiline parameters, generic type arguments, and arbitrarily nested return types.
+    """
+    pattern = re.compile(r"\bfunction(\s+[a-zA-Z0-9_.:]+)?(?:\s*<[^>]*>)?\s*\(")
+    result = []
+    last_idx = 0
+    length = len(code)
+
+    while True:
+        m = pattern.search(code, last_idx)
+        if not m:
+            result.append(code[last_idx:])
+            break
+
+        func_start = m.start()
+        fn_name = m.group(1) or ""
+        result.append(code[last_idx:func_start])
+
+        # Scan parameters inside balanced (...)
+        param_start = m.end()  # right after '('
+        idx = param_start
+        paren_depth = 1
+        brace_depth = 0
+        bracket_depth = 0
+        angle_depth = 0
+
+        while idx < length and paren_depth > 0:
+            ch = code[idx]
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                paren_depth -= 1
+                if paren_depth == 0:
+                    break
+            elif ch == '{':
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth = max(0, brace_depth - 1)
+            elif ch == '[':
+                bracket_depth += 1
+            elif ch == ']':
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == '<':
+                angle_depth += 1
+            elif ch == '>':
+                angle_depth = max(0, angle_depth - 1)
+            idx += 1
+
+        raw_params = code[param_start:idx]
+        cleaned_params = _clean_function_parameters(raw_params)
+        result.append(f"function{fn_name}({cleaned_params})")
+
+        # Now idx is pointing at the closing ')' of the parameter list
+        idx += 1  # move past ')'
+
+        # Check if there is a return type annotation: `:`
+        look = idx
+        while look < length and code[look].isspace():
+            look += 1
+
+        if look < length and code[look] == ':':
+            idx = _consume_luau_type(code, look + 1)
+
+        last_idx = idx
+
+    return "".join(result)
+
+
+def _strip_local_type_annotations(code: str) -> str:
+    """
+    Strips type annotations from local variable declarations:
+        local x: number = 10 -> local x = 10
+        local x: number, y: string = 1, 2 -> local x, y = 1, 2
+        local x: number, y: string -> local x, y
+        local cb: (amount: number) -> number = fn -> local cb = fn
+        local f: <T>(T) -> T = id -> local f = id
+    """
+    pattern = re.compile(r"\blocal\s+(?!function\b)")
+    result = []
+    last_idx = 0
+    length = len(code)
+
+    while True:
+        m = pattern.search(code, last_idx)
+        if not m:
+            result.append(code[last_idx:])
+            break
+
+        stmt_start = m.start()
+        result.append(code[last_idx:stmt_start])
+
+        idx = m.end()
+        var_chunks = []
+        curr_chunk_start = idx
+
+        paren_depth = 0
+        brace_depth = 0
+        bracket_depth = 0
+        angle_depth = 0
+        ended_with_equal = False
+        end_idx = length
+
+        while idx < length:
+            ch = code[idx]
+
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                paren_depth = max(0, paren_depth - 1)
+            elif ch == '{':
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth = max(0, brace_depth - 1)
+            elif ch == '[':
+                bracket_depth += 1
+            elif ch == ']':
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == '<':
+                angle_depth += 1
+            elif ch == '>':
+                angle_depth = max(0, angle_depth - 1)
+            elif paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                if ch == ',':
+                    var_chunks.append(code[curr_chunk_start:idx].strip())
+                    curr_chunk_start = idx + 1
+                elif ch == '=':
+                    ended_with_equal = True
+                    var_chunks.append(code[curr_chunk_start:idx].strip())
+                    end_idx = idx
+                    break
+                elif ch in (';', '\n', '\r'):
+                    var_chunks.append(code[curr_chunk_start:idx].strip())
+                    end_idx = idx
+                    break
+
+            idx += 1
+
+        if idx >= length and curr_chunk_start < length:
+            var_chunks.append(code[curr_chunk_start:].strip())
+            end_idx = length
+
+        cleaned_vars = []
+        for chunk in var_chunks:
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            m_var = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)", chunk)
+            if m_var:
+                cleaned_vars.append(m_var.group(1))
+
+        if cleaned_vars:
+            result.append(f"local {', '.join(cleaned_vars)}")
+            if ended_with_equal:
+                result.append(" =")
+                last_idx = end_idx + 1
+            else:
+                last_idx = end_idx
+        else:
+            result.append(code[stmt_start:end_idx])
+            last_idx = end_idx
+
+    return "".join(result)
 
 
 def _strip_type_casts(code: str) -> str:
@@ -774,8 +802,10 @@ class LuauSyntaxNormalizer:
             rhs = content[rhs_start:rhs_end].strip()
             if lhs and rhs:
                 op_symbol = matched_operator[:-1]
+                is_simple = bool(re.match(r"^(?:[a-zA-Z0-9_.]+|\d+(?:\.\d+)?|\([^)]+\))$", rhs))
+                rhs_formatted = rhs if is_simple else f"({rhs})"
                 replacements.append(
-                    (lhs_start, rhs_end, f"{lhs} = {lhs} {op_symbol} {rhs}")
+                    (lhs_start, rhs_end, f"{lhs} = {lhs} {op_symbol} {rhs_formatted}")
                 )
             idx = rhs_end
 

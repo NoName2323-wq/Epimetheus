@@ -154,6 +154,40 @@ class EngineAstOptimizerTests(unittest.TestCase):
         self.assertIn("a = 2", opt_mut)
         self.assertIn("print(b)", opt_mut)
 
+    def test_alias_propagation_scope_awareness(self):
+        # Case 1: Function parameter shadowing
+        fn_code = (
+            "local a = getSomething()\n"
+            "local b = a\n"
+            "function test(a)\n"
+            "    return b + a\n"
+            "end\n"
+        )
+        opt_fn = optimize_lua_code(fn_code)
+        # b inside function test(a) must NOT be replaced by a because parameter a shadows outer a
+        self.assertIn("return b + a", opt_fn)
+
+        # Case 2: Inner block local shadowing
+        block_code = (
+            "local a = getSomething()\n"
+            "local b = a\n"
+            "do\n"
+            "    local a = 2\n"
+            "    print(b)\n"
+            "end\n"
+        )
+        opt_block = optimize_lua_code(block_code)
+        self.assertIn("local b = a", opt_block)
+        self.assertIn("print(b)", opt_block)
+
+    def test_safe_eval_math_expr_prevents_power_dos(self):
+        # Extreme exponent must return None without hanging or throwing memory errors
+        self.assertIsNone(safe_eval_math_expr("9 ^ 999999999999"))
+        self.assertIsNone(safe_eval_math_expr("9 ^ -10"))
+        # Valid bit shift powers must evaluate properly
+        self.assertEqual(safe_eval_math_expr("2 ^ 16"), 65536)
+        self.assertEqual(safe_eval_math_expr("2 ^ 8"), 256)
+
 
 class EngineStaticDecoderTests(unittest.TestCase):
     def test_unescape_and_escape_roundtrip(self):
@@ -448,6 +482,40 @@ class EngineSyntaxNormalizerTests(unittest.TestCase):
         self.assertNotIn("-> string", normalized)
         self.assertNotIn("-> boolean", normalized)
 
+    def test_compound_assignment_with_complex_rhs(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = "x += a + b\ny += foo(bar) + qux\nz *= a * b\n"
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("x = x + (a + b)", normalized)
+        self.assertIn("y = y + (foo(bar) + qux)", normalized)
+        self.assertIn("z = z * (a * b)", normalized)
+
+    def test_typed_multi_local_declarations(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "local x: number, y: string = 1, 2\n"
+            "local a: number, b: string\n"
+            "local p: (number) -> string, q: boolean = f, true\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("local x, y = 1, 2", normalized)
+        self.assertIn("local a, b\n", normalized)
+        self.assertIn("local p, q = f, true", normalized)
+
+    def test_function_return_type_with_arrow(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "function f(): (number) -> string\n"
+            "    return 'val'\n"
+            "end\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("function f()", normalized)
+        self.assertNotIn("-> string", normalized)
+
 
 class EngineConstantInlinerTests(unittest.TestCase):
     def test_detect_wrapper_and_inline_constants(self):
@@ -475,6 +543,14 @@ local s3 = get_c(-7)
         code = 'local p = setmetatable({ ["abc"] = 123 }, { __index = function() end })'
         unwrapped = inliner.unwrap_proxified_locals(code)
         self.assertEqual(unwrapped, "local p = 123")
+
+    def test_inline_constants_in_code_unwraps_proxified_locals(self):
+        from engine.constant_inliner import inline_constants_in_code
+
+        code = 'local val = setmetatable({ ["key"] = "my_value" }, { __index = function() end })\n'
+        res = inline_constants_in_code(code)
+        self.assertIn('local val = "my_value"', res)
+        self.assertNotIn("setmetatable", res)
 
 
 if __name__ == "__main__":

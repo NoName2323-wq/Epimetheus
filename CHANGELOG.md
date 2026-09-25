@@ -23,9 +23,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added metatable fallback indexing for `_G` and `getfenv()` to return `MockEnv`, preventing nil dereference crashes when obfuscated closures dynamically query global Roblox instances (`game`, `workspace`, etc.).
 - **Expanded Test Suite**:
   - Added test suites `EngineSyntaxNormalizerTests` and `EngineConstantInlinerTests` to [`tests/test_engine.py`](tests/test_engine.py).
-  - Test suite expanded to **44 unit tests** (40 active tests, 4 local fixture tests).
+  - Test suite expanded to **52 unit tests** (48 active tests, 4 local fixture tests).
 
 ### Changed & Fixed
+- **Sandboxed Static Constant Extraction & Resource Limits**:
+  - Hardened `extract_static_constants()` in `deobfuscator.py` by prepending a strict sandbox header (`safe_env`, `setfenv(1, safe_env)`, neutralizing `os`, `io`, `package`, `dofile`, `loadfile`, `debug`), eliminating arbitrary host code execution risks from input tables.
+  - Active enforcement of `LUA_MAX_SBX` environment variable limits in `_check_loop()` across VM table unpack loops.
+- **Complex Compound Assignment Normalization**:
+  - Upgraded `_find_compound_rhs_end` in `engine/syntax_normalizer.py` with operand/binary-operator alternation tracking, correctly processing complex RHS expressions (`x += a + b`, `x += foo(bar) + qux`) while preserving single-line multiple compound statements (`foo+=1 bar.baz-=delta`).
+  - Added precedence-preserving parentheses wrapping for compound expressions.
+- **Typed Multi-Local Variable Declarations**:
+  - Rewrote `_strip_local_type_annotations` in `engine/syntax_normalizer.py` to support comma-separated multi-local variable declarations (`local x: number, y: string = 1, 2` $\rightarrow$ `local x, y = 1, 2`, `local a: number, b: string` $\rightarrow$ `local a, b`), completely preventing variable loss.
+- **Function Return Type Annotation Stripping with `->`**:
+  - Integrated `_consume_luau_type` into `_strip_function_type_annotations`, seamlessly removing complex function return types (`function f(): (number) -> string` $\rightarrow$ `function f()`) without leaving trailing arrows or syntax errors.
+- **Scope-Aware Alias Propagation**:
+  - Enhanced `propagate_copy_assignments` in `engine/ast_optimizer.py` with lexical scope stack tracking (`scope_stack`).
+  - Aliases are strictly scoped to their block and automatically disabled when source or destination identifiers are shadowed by inner function parameters (`function test(a) return b + a end`) or inner local variable declarations.
+- **Trace Loop Reconstruction Tail Preservation**:
+  - Extracted modular `render_trace_operations` in `trace_to_lua.py` and connected `remaining_ops` processing after detected loops, ensuring subsequent operations after `while true do ... end` are fully preserved in `.deobf.lua`.
+- **Pipeline Integration for Proxified Locals**:
+  - Connected `unwrap_proxified_locals()` directly into `inline_constants_in_code()` in `engine/constant_inliner.py`, ensuring `deobfuscator.py` automatically unwraps metatable-proxified locals.
+- **Math Expression Power Operator DoS Hardening**:
+  - Enforced exponent magnitude checks ($0 \le \text{exp} \le 64$) and base limits ($\le 10^9$) in `safe_eval_math_expr` within `engine/ast_optimizer.py`, preventing CPU/memory exhaustion attacks from massive exponents (e.g., `9 ^ 999999999999`).
 - **Chained Alias Propagation & Variable Mutability Tracking**:
   - Enhanced `propagate_copy_assignments` in `engine/ast_optimizer.py` with transitive alias chain resolution (`local b = a; local c = b` correctly propagates `c` to `a` without leaving dangling references).
   - Implemented variable mutability detection: variables reassigned anywhere in the chunk (`assignment_counts[var] > 1`) are strictly preserved, preventing invalid propagation across mutating assignments (e.g., `local a = 1; local b = a; a = 2; print(b)`).
@@ -56,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replaced partial Windows-only check with strict Linux platform validation (`sys.platform.startswith("linux")`), properly blocking macOS (`darwin`), BSD, and Windows from execution.
 - **Documentation & Legal Attribution**:
   - Added formal upstream attribution for Prometheus by Elias Oelschner (`https://github.com/prometheus-lua/Prometheus`) to `README.md` and `README.ru.md`.
-  - Fully synchronized test suite documentation and performance tables across all documents (41 unit tests with 37 active tests and 4 local fixture tests).
+  - Fully synchronized test suite documentation and performance tables across all documents (52 unit tests with 48 active tests and 4 local fixture tests).
 
 ---
 

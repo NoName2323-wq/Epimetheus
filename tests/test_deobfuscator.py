@@ -340,6 +340,41 @@ class DeobfuscatorRegressionTests(unittest.TestCase):
             self.assertIn("game.GetService", result.stdout)
             self.assertIn('"Workspace"', result.stdout)
 
+    def test_extract_static_constants_sandboxed(self):
+        from deobfuscator import extract_static_constants
+
+        malicious_content = (
+            "local constants_table = {\n"
+            "    [1] = (os and os.execute and os.execute('echo EXPLOIT_TRIGGERED')) or 'safe_data',\n"
+            "    [2] = 'hello_world',\n"
+            "}\n"
+        )
+        extracted = extract_static_constants(malicious_content, "constants_table")
+        self.assertIn("safe_data", extracted)
+        self.assertNotIn("EXPLOIT_TRIGGERED", extracted)
+
+    def test_trace_to_lua_loop_preserves_tail_operations(self):
+        import trace_to_lua
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            report = Path(tmp_dir) / "loop_tail_test.report.txt"
+            lines = [
+                "--- TRACE ---",
+                "CALL_RESULT --> local v_1001 = game.GetService(Workspace)",
+                "CALL_RESULT --> local v_1002 = v_1001.FindPartOnRay(Ray)",
+                "CALL_RESULT --> local v_1003 = game.GetService(Workspace)",
+                "CALL_RESULT --> local v_1004 = v_1003.FindPartOnRay(Ray)",
+                "CALL_RESULT --> local v_1005 = game.GetService(Workspace)",
+                "CALL_RESULT --> local v_1006 = v_1005.FindPartOnRay(Ray)",
+                "CALL_RESULT --> local v_1007 = game.GetService(Players)",
+                "--- TRACE END ---",
+            ]
+            report.write_text("\n".join(lines), encoding="utf-8")
+            trace_to_lua.parse_trace(str(report))
+            deobf = report.with_name("loop_tail_test.deobf.lua").read_text(encoding="utf-8")
+            self.assertIn("while true do", deobf)
+            self.assertIn("Players", deobf)
+
 
 if __name__ == "__main__":
     unittest.main()

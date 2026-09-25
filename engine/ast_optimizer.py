@@ -251,6 +251,17 @@ def safe_eval_math_expr(expr_str: str) -> Optional[Union[int, float]]:
         ):
             return None
 
+        # Guard against huge exponent DoS (e.g. 9 ^ 999999999)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+            if isinstance(node.right, ast.Constant):
+                if not isinstance(node.right.value, (int, float)) or not (0 <= node.right.value <= 64):
+                    return None
+            else:
+                return None
+            if isinstance(node.left, ast.Constant) and isinstance(node.left.value, (int, float)):
+                if abs(node.left.value) > 1e9:
+                    return None
+
     try:
         val = eval(compile(parsed, "<string>", "eval"), {"__builtins__": None}, {})
         if isinstance(val, (int, float)):
@@ -454,7 +465,6 @@ class AstOptimizer:
            preserving exact program semantics and variable values.
         3. Object fields (obj.alias, obj:alias) are never mutated.
         """
-        alias_map: Dict[str, str] = {}
         cleaned_lines: List[str] = []
 
         copy_pattern = re.compile(r"^\s*local\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$")
@@ -473,15 +483,37 @@ class AstOptimizer:
                 var = m.group(1)
                 assignment_counts[var] = assignment_counts.get(var, 0) + 1
 
+        scope_stack: List[Dict[str, Any]] = [{"aliases": {}, "locals": set()}]
+
         def resolve_root(var: str) -> str:
             visited = set()
             curr = var
-            while curr in alias_map:
-                if curr in visited:
+            while True:
+                found = False
+                for s in reversed(scope_stack):
+                    if curr in s["aliases"]:
+                        if curr in visited:
+                            break
+                        visited.add(curr)
+                        curr = s["aliases"][curr]
+                        found = True
+                        break
+                if not found:
                     break
-                visited.add(curr)
-                curr = alias_map[curr]
             return curr
+
+        def get_active_aliases() -> Dict[str, str]:
+            active: Dict[str, str] = {}
+            for i, s in enumerate(scope_stack):
+                for dst, src in s["aliases"].items():
+                    shadowed = False
+                    for child_s in scope_stack[i + 1:]:
+                        if src in child_s["locals"] or dst in child_s["locals"]:
+                            shadowed = True
+                            break
+                    if not shadowed:
+                        active[dst] = src
+            return active
 
         for line in lines:
             stripped = line.strip()
@@ -489,6 +521,15 @@ class AstOptimizer:
             # Remove self-assignments: x = x
             if self.eliminate_dead_assignments and self_assign_pattern.match(stripped):
                 continue
+
+            closing_count = len(re.findall(r"\b(?:end|until)\b", stripped))
+            fn_match = re.search(r"\bfunction\s*(?:[a-zA-Z0-9_.:]+)?\s*\(([^)]*)\)", stripped)
+            do_match = re.search(r"\b(?:do|then|repeat)\b", stripped)
+
+            if stripped in ("end", "end;", "until", "end)") or stripped.startswith("end ") or stripped.startswith("until "):
+                for _ in range(closing_count):
+                    if len(scope_stack) > 1:
+                        scope_stack.pop()
 
             # Check if line defines an alias
             m = copy_pattern.match(stripped)
@@ -504,18 +545,33 @@ class AstOptimizer:
                         and root_src not in LUA_KEYWORDS
                         and var_dst not in LUA_KEYWORDS
                     ):
-                        alias_map[var_dst] = root_src
+                        scope_stack[-1]["aliases"][var_dst] = root_src
+                        scope_stack[-1]["locals"].add(var_dst)
                         # Drop the redundant alias definition line
                         continue
 
-            # Apply existing aliases to line
+            m_local = re.match(r"^\s*local\s+([a-zA-Z_][a-zA-Z0-9_,\s]*)", stripped)
+            if m_local and not stripped.startswith("local function"):
+                for v in m_local.group(1).split(","):
+                    v_clean = v.split(":")[0].strip().split("=")[0].strip()
+                    if v_clean:
+                        scope_stack[-1]["locals"].add(v_clean)
+
+            # Apply active aliases to line
+            active_aliases = get_active_aliases()
             transformed_line = line
-            for dst, src in alias_map.items():
+            for dst, src in active_aliases.items():
                 if dst in transformed_line:
                     # Word boundary replacement that EXCLUDES object fields (e.g. obj.alias or obj:alias)
                     transformed_line = re.sub(rf"(?<![.:])\b{re.escape(dst)}\b", src, transformed_line)
 
             cleaned_lines.append(transformed_line)
+
+            if fn_match:
+                params = {p.strip().split(":")[0].strip() for p in fn_match.group(1).split(",") if p.strip()}
+                scope_stack.append({"aliases": {}, "locals": params})
+            elif do_match and not stripped.startswith("end"):
+                scope_stack.append({"aliases": {}, "locals": set()})
 
         return cleaned_lines
 

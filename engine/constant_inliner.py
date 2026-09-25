@@ -142,6 +142,7 @@ class ConstantInliner:
 def inline_constants_in_code(
     code: str, constants: Optional[List[Any]] = None
 ) -> str:
-    """Convenience helper to inline constant array calls in Lua source."""
+    """Convenience helper to unwrap proxy locals and inline constant array calls in Lua source."""
     inliner = ConstantInliner(constants)
+    code = inliner.unwrap_proxified_locals(code)
     return inliner.inline_constants(code)
