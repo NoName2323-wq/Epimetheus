@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import os
 import sys
 import re
 import functools
 from collections import OrderedDict
+from typing import Optional, Dict, List, Tuple, Any, Union
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engine.trace_filter import TraceFilter, filter_trace_stream
