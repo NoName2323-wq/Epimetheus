@@ -277,10 +277,16 @@ class DeobfuscatorRegressionTests(unittest.TestCase):
 
     def test_check_platform_blocks_non_linux(self):
         import unittest.mock as mock
-        with mock.patch("sys.platform", "win32"):
-            with self.assertRaises(SystemExit) as ctx:
-                deobfuscator.check_platform()
-            self.assertIn("Linux-native", str(ctx.exception))
+        for non_linux in ("win32", "darwin", "freebsd", "cygwin", "sunos5"):
+            with mock.patch("sys.platform", non_linux):
+                with self.assertRaises(SystemExit) as ctx:
+                    deobfuscator.check_platform()
+                self.assertIn("Linux-native", str(ctx.exception))
+
+        with mock.patch("sys.platform", "linux"):
+            deobfuscator.check_platform()  # Must not raise
+        with mock.patch("sys.platform", "linux2"):
+            deobfuscator.check_platform()  # Must not raise
 
 
 if __name__ == "__main__":

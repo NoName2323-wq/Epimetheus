@@ -22,8 +22,11 @@ LUA_CONTROL_STRUCTURE_TOO_LONG = "control structure too long"
 
 
 def check_platform():
-    if sys.platform == "win32" or os.name == "nt":
-        raise SystemExit("Error: Epimetheus is an exclusively Linux-native engine. Windows is not supported.")
+    if not sys.platform.startswith("linux"):
+        raise SystemExit(
+            f"Error: Epimetheus is an exclusively Linux-native engine. "
+            f"Only Linux is supported (current platform: {sys.platform})."
+        )
 
 
 def get_lua_executable():

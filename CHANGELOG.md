@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added test suites `EngineSyntaxNormalizerTests` and `EngineConstantInlinerTests` to [`tests/test_engine.py`](tests/test_engine.py).
   - Test suite expanded to **30 unit tests** (100% passing).
 
+### Changed & Fixed
+- **Strict Host Platform Enforcement**:
+  - Replaced partial Windows-only check with strict Linux platform validation (`sys.platform.startswith("linux")`), properly blocking macOS (`darwin`), BSD, and Windows from execution.
+  - Expanded unit test `test_check_platform_blocks_non_linux` to verify rejection across `win32`, `darwin`, `freebsd`, `cygwin`, and `sunos5`.
+- **CI Test Matrix Alignment**:
+  - Added Python 3.9 to the GitHub Actions test matrix (`["3.9", "3.10", "3.11", "3.12"]`), ensuring full automated testing for all advertised Python versions.
+- **Documentation & Legal Attribution**:
+  - Added formal upstream attribution for Prometheus by Elias Oelschner (`https://github.com/prometheus-lua/Prometheus`) to `README.md` and `README.ru.md`.
+  - Clarified test suite documentation and badges (30 unit tests with 26 active tests and 4 local fixture tests).
+
 ---
 
 ## [2.5.0] - 2026-09-25

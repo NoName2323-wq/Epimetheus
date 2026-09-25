@@ -7,7 +7,7 @@
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Only-success?style=for-the-badge&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-yellow?style=for-the-badge)
-![Tests](https://img.shields.io/badge/Tests-30%20Passed-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-30%20Unit%20Tests-brightgreen?style=for-the-badge)
 
 **Linux-exclusive next-generation trace emulation, static constant decoding, and AST-optimized deobfuscation engine for Prometheus-protected Roblox Luau scripts.**
 
@@ -26,7 +26,7 @@
 ## ⚠️ Important Note: Linux Only
 
 > [!IMPORTANT]
-> **Epimetheus is built exclusively for Linux.** Windows support has been completely removed from the codebase, eliminating all legacy `.exe` wrappers, Windows DLLs, and registry dependencies in favor of pure POSIX performance, native ELF process isolation, and reliable signal handling. Running on Windows will raise a clean termination error.
+> **Epimetheus is built exclusively for Linux.** The engine strictly checks that the host platform is Linux (`sys.platform.startswith("linux")`). Non-Linux systems (Windows, macOS / Darwin, BSD) are intentionally blocked from execution to guarantee POSIX process semantics, native 64-bit ELF execution (`lua_bin/lua5.1`), and reliable timeout signals.
 
 ---
 
@@ -35,6 +35,7 @@
 * **Name:** **Epimetheus** (formerly *Prometheus-WeAre-Devs-Dumper*).
 * **Original Project Base:** Originates from [hutaoshusband/Prometheus-WeAre-Devs-Dumper](https://github.com/hutaoshusband/Prometheus-WeAre-Devs-Dumper). The initial project was developed as a basic Windows-only utility.
 * **Obfuscation Target:** Analyzed and reverse-engineered against the official [Prometheus Obfuscator by levno-710 (v0.2.11.1)](https://github.com/prometheus-lua/Prometheus).
+* **Attribution:** Based on Prometheus by Elias Oelschner, https://github.com/prometheus-lua/Prometheus
 * **Evolution to Epimetheus:** The codebase was rebuilt from the ground up as a high-performance, Linux-only engine, introducing modular AST optimization, streaming VM noise filtration, pure Python static table decoding, and Luau syntax normalization.
 
 ---
@@ -122,7 +123,7 @@ Real-world test on production Prometheus-obfuscated scripts:
 | **Complex Script (~2.5 MB) Report** | 10.59 MB (257,942 lines) | **775 KB** (13,158 lines) | **-92.8% file size** |
 | **Variable Resolution Speed** | ~1.61 s per chunk | **0.012 s** per chunk | **134x faster** |
 | **Workspace Footprint** | >26 MB | **5.9 MB** | **77% disk savings** |
-| **Unit Test Suite** | 9 tests (basic) | **30 tests** (100% passing) | **Full coverage** |
+| **Unit Test Suite** | 9 tests (basic) | **30 unit tests** (26 active, 4 local fixtures) | **Comprehensive test suite** |
 
 ---
 
@@ -191,7 +192,8 @@ For every script processed (e.g. `MyScript.lua`), Epimetheus generates:
 
 ---
 
-## 📄 License & Disclaimer
+## 📄 License & Attribution
 
 * **License:** This project is licensed under the **GNU General Public License v3.0** (GPLv3). See the [LICENSE](LICENSE) file for complete terms and conditions.
+* **Attribution:** Based on Prometheus by Elias Oelschner, https://github.com/prometheus-lua/Prometheus
 * **Disclaimer:** This software is developed strictly for reverse engineering research, cybersecurity analysis, and educational purposes. All trademarks, logos, and brand names are the property of their respective owners.
