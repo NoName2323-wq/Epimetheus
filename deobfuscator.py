@@ -13,9 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engine.trace_filter import TraceFilter, filter_trace_lines
 from engine.static_decoder import StaticConstantDecoder, decode_prometheus_constants
 from engine.ast_optimizer import AstOptimizer, optimize_lua_code
+from engine.syntax_normalizer import normalize_luau_syntax, LuauSyntaxNormalizer
+from engine.constant_inliner import ConstantInliner, inline_constants_in_code
 
 
-COMPOUND_ASSIGNMENT_OPERATORS = ("+=", "-=", "*=", "/=", "%=", "..=")
+COMPOUND_ASSIGNMENT_OPERATORS = ("+=", "-=", "*=", "/=", "%=", "^=", "..=")
 LUA_CONTROL_STRUCTURE_TOO_LONG = "control structure too long"
 
 
@@ -177,192 +179,6 @@ def _configure_text_streams():
             stream.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
-
-
-def _find_compound_lhs_start(content, operator_index):
-    idx = operator_index - 1
-    while idx >= 0 and content[idx].isspace():
-        idx -= 1
-
-    while idx >= 0 and content[idx] == "]":
-        bracket_depth = 1
-        idx -= 1
-        while idx >= 0 and bracket_depth > 0:
-            if content[idx] == "]":
-                bracket_depth += 1
-            elif content[idx] == "[":
-                bracket_depth -= 1
-            idx -= 1
-
-    while idx >= 0 and (content[idx].isalnum() or content[idx] == "_"):
-        idx -= 1
-
-    while idx >= 0 and content[idx] == ".":
-        idx -= 1
-        while idx >= 0 and content[idx] == "]":
-            bracket_depth = 1
-            idx -= 1
-            while idx >= 0 and bracket_depth > 0:
-                if content[idx] == "]":
-                    bracket_depth += 1
-                elif content[idx] == "[":
-                    bracket_depth -= 1
-                idx -= 1
-        while idx >= 0 and (content[idx].isalnum() or content[idx] == "_"):
-            idx -= 1
-
-    return idx + 1
-
-
-def _find_compound_rhs_end(content, rhs_start):
-    idx = rhs_start
-    length = len(content)
-    bracket_depth = 0
-    paren_depth = 0
-    brace_depth = 0
-    quote = None
-
-    while idx < length and content[idx].isspace():
-        idx += 1
-
-    while idx < length:
-        char = content[idx]
-
-        if quote:
-            if char == "\\":
-                idx += 2
-                continue
-            if char == quote:
-                quote = None
-            idx += 1
-            continue
-
-        if char in ("'", '"'):
-            quote = char
-            idx += 1
-            continue
-
-        if char == "[":
-            bracket_depth += 1
-        elif char == "]":
-            bracket_depth = max(0, bracket_depth - 1)
-        elif char == "(":
-            paren_depth += 1
-        elif char == ")":
-            if paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
-                break
-            paren_depth = max(0, paren_depth - 1)
-        elif char == "{":
-            brace_depth += 1
-        elif char == "}":
-            if brace_depth == 0 and bracket_depth == 0 and paren_depth == 0:
-                break
-            brace_depth = max(0, brace_depth - 1)
-        elif bracket_depth == 0 and paren_depth == 0 and brace_depth == 0:
-            if char in ";,\n\r":
-                break
-            if char.isspace():
-                break
-
-        idx += 1
-
-    return idx
-
-
-def normalize_luau_syntax(content):
-    replacements = []
-    idx = 0
-    length = len(content)
-
-    in_single_quote = False
-    in_double_quote = False
-    in_long_string = False
-    in_comment = False
-
-    while idx < length:
-        ch = content[idx]
-
-        # Handle escapes inside single or double quotes
-        if (in_single_quote or in_double_quote) and ch == "\\":
-            idx += 2
-            continue
-
-        if not (in_single_quote or in_double_quote or in_long_string or in_comment):
-            if ch == "'":
-                in_single_quote = True
-                idx += 1
-                continue
-            elif ch == '"':
-                in_double_quote = True
-                idx += 1
-                continue
-            elif content.startswith("--[[", idx):
-                in_comment = True
-                idx += 4
-                continue
-            elif content.startswith("--", idx):
-                nl = content.find("\n", idx)
-                if nl == -1:
-                    break
-                idx = nl + 1
-                continue
-            elif content.startswith("[[", idx):
-                in_long_string = True
-                idx += 2
-                continue
-
-            matched_operator = None
-            for operator in COMPOUND_ASSIGNMENT_OPERATORS:
-                if content.startswith(operator, idx):
-                    matched_operator = operator
-                    break
-
-            if not matched_operator:
-                idx += 1
-                continue
-
-            lhs_start = _find_compound_lhs_start(content, idx)
-            rhs_start = idx + len(matched_operator)
-            rhs_end = _find_compound_rhs_end(content, rhs_start)
-
-            lhs = content[lhs_start:idx].strip()
-            rhs = content[rhs_start:rhs_end].strip()
-            if lhs and rhs:
-                replacements.append(
-                    (lhs_start, rhs_end, f"{lhs} = {lhs} {matched_operator[:-1]} {rhs}")
-                )
-            idx = rhs_end
-            continue
-        elif in_single_quote:
-            if ch == "'":
-                in_single_quote = False
-            idx += 1
-            continue
-        elif in_double_quote:
-            if ch == '"':
-                in_double_quote = False
-            idx += 1
-            continue
-        elif in_long_string:
-            if content.startswith("]]", idx):
-                in_long_string = False
-                idx += 2
-                continue
-            idx += 1
-            continue
-        elif in_comment:
-            if content.startswith("]]", idx):
-                in_comment = False
-                idx += 2
-                continue
-            idx += 1
-            continue
-
-    rewritten = content
-    for start, end, replacement in reversed(replacements):
-        rewritten = rewritten[:start] + replacement + rewritten[end:]
-
-    return rewritten
 
 
 _configure_text_streams()
@@ -1006,12 +822,24 @@ setmetatable(_G, { __index = MockEnv })
         import traceback
         traceback.print_exc()
 
+    deobf_path = filepath + ".deobf.lua"
+    if os.path.exists(deobf_path):
+        try:
+            with open(deobf_path, "r", encoding="utf-8", errors="replace") as df:
+                deobf_content = df.read()
+            inlined_content = inline_constants_in_code(deobf_content)
+            if inlined_content != deobf_content:
+                with open(deobf_path, "w", encoding="utf-8") as df:
+                    df.write(inlined_content)
+        except Exception:
+            pass
+
     if os.path.exists(temp_file):
         os.remove(temp_file)
     #if os.path.exists(report_file):
     #    os.remove(report_file)
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 
 
 def print_help():

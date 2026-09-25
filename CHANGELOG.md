@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.0] - 2026-09-25
+
+### Added
+- **Luau Syntax Normalizer Sub-Engine (`engine/syntax_normalizer.py`)**:
+  - Extracted and enhanced full lexical Luau normalization into an independent module.
+  - Added support for all Luau compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `^=`, `..=`) with operand preservation and balanced nesting.
+  - Added Luau static type annotation stripping (`local x: type = expr` $\rightarrow$ `local x = expr`, `type T = ...`) to prevent Lua 5.1 syntax errors during compilation.
+  - Strict preservation of raw strings, multiline strings, and single/multiline comments.
+- **Constant Inliner & Wrapper Unwrapper Sub-Engine (`engine/constant_inliner.py`)**:
+  - Implemented static reverse-engineering of `ConstantArray.lua` wrapper functions (`local function wrapper(a) return ARR[a + offset] end`).
+  - Statically replaces wrapper calls (`wrapper(index)`) directly with resolved constant values in the generated `.deobf.lua`.
+  - Added detection and unwrapping of metatable-proxified local variables (`ProxifyLocals.lua`), restoring clean direct local declarations.
+- **Global Roblox Environment Mocking**:
+  - Added metatable fallback indexing for `_G` and `getfenv()` to return `MockEnv`, preventing nil dereference crashes when obfuscated closures dynamically query global Roblox instances (`game`, `workspace`, etc.).
+- **Expanded Test Suite**:
+  - Added test suites `EngineSyntaxNormalizerTests` and `EngineConstantInlinerTests` to [`tests/test_engine.py`](tests/test_engine.py).
+  - Test suite expanded to **30 unit tests** (100% passing).
+
+---
+
 ## [2.5.0] - 2026-09-25
 
 ### Added

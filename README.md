@@ -2,12 +2,12 @@
 
 <div align="center">
 
-![Epimetheus](https://img.shields.io/badge/Project-Epimetheus%20v2.5.0-blueviolet?style=for-the-badge)
+![Epimetheus](https://img.shields.io/badge/Project-Epimetheus%20v2.6.0-blueviolet?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Only-success?style=for-the-badge&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-yellow?style=for-the-badge)
-![Tests](https://img.shields.io/badge/Tests-25%20Passed-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-30%20Passed-brightgreen?style=for-the-badge)
 
 **Linux-exclusive next-generation trace emulation, static constant decoding, and AST-optimized deobfuscation engine for Prometheus-protected Roblox Luau scripts.**
 
@@ -31,7 +31,7 @@
 * **Name:** **Epimetheus** (formerly *Prometheus-WeAre-Devs-Dumper*).
 * **Original Project Base:** Originates from [hutaoshusband/Prometheus-WeAre-Devs-Dumper](https://github.com/hutaoshusband/Prometheus-WeAre-Devs-Dumper). The initial project was developed as a basic Windows-only utility.
 * **Obfuscation Target:** Analyzed and reverse-engineered against the official [Prometheus Obfuscator by levno-710 (v0.2.11.1)](https://github.com/prometheus-lua/Prometheus).
-* **Evolution to Epimetheus:** The codebase was rebuilt from the ground up as a high-performance, Linux-only engine, introducing modular AST optimization, streaming VM noise filtration, and pure Python static table decoding.
+* **Evolution to Epimetheus:** The codebase was rebuilt from the ground up as a high-performance, Linux-only engine, introducing modular AST optimization, streaming VM noise filtration, pure Python static table decoding, and Luau syntax normalization.
 
 ---
 
@@ -45,6 +45,14 @@
 
 ### 2. High-Performance Modular Sub-Engines (`engine/`)
 The processing pipeline was split into dedicated, high-speed modules:
+
+* **[`engine/syntax_normalizer.py`](engine/syntax_normalizer.py) (Luau Syntax Normalizer):**
+  - **Compound Assignment Desugaring:** Automatically rewrites Luau compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `^=`, `..=`) into standard Lua 5.1 syntax (e.g. `x += 5` $\rightarrow$ `x = x + 5`) while strictly preserving string literals, nested parentheses, and comments.
+  - **Luau Type Annotation Stripping:** Removes type annotations (e.g. `local x: number = 1` $\rightarrow$ `local x = 1`, `type Foo = ...`) to prevent standard Lua 5.1 compiler parse errors.
+
+* **[`engine/constant_inliner.py`](engine/constant_inliner.py) (Constant Inliner & Wrapper Unwrapper):**
+  - **Prometheus ConstantArray Wrapper Inlining:** Reverse-engineers `ConstantArray.lua` wrapper functions (`local function wrapper(a) return ARR[a + offset] end`) and replaces wrapper calls (`wrapper(15)`) with inlined decoded constants directly into the deobfuscated Lua output.
+  - **Proxified Locals Unwrapping:** Detects metatable-proxified local variables (`ProxifyLocals.lua`) and restores them to clean, direct local assignments.
 
 * **[`engine/trace_filter.py`](engine/trace_filter.py) (Stream & File Trace Filter):**
   - Prometheus VM generates hundreds of thousands of redundant chunk allocations and unpack spam (`UNPACK CALLED WITH TABLE...` and `CAPTURED CHUNK STRING...`).
@@ -70,7 +78,7 @@ The processing pipeline was split into dedicated, high-speed modules:
 
 ### 3. Core Engine Revamp & Speedup
 * **130x Faster Variable Resolution (`trace_to_lua.py`):** Replaced an $O(N \cdot M)$ sequential loop of `re.sub` over thousands of keys with a single compiled regular expression alternation `\b(var1|var2|...)\b`, reducing replacement time from **1.61s down to 0.012s**.
-* **Lexical Luau Syntax Normalizer:** Rewrites Luau compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `..=`) to standard Lua 5.1 while strictly preserving string literals.
+* **Global Environment Robustness:** Enhanced `MockEnv` with fallback metatable indexing for `_G` and `getfenv()`, preventing `nil` index errors when Prometheus scripts dynamically access global Roblox services.
 * **Sandbox Anti-Tamper Hardening:** Added canary protection, line hook neutralization, dummy method chains, and sandbox memory limits (`LUA_MAX_SBX`) to bypass Prometheus environment checks.
 * **Streamlined Workflow:** The bloated web server viewer (`viewer.py`) has been removed. Because reports and deobfuscated scripts are now cleanly compressed, they open instantaneously in any standard editor (VS Code, Sublime Text, Notepad++, vim) without lag.
 
@@ -80,7 +88,7 @@ The processing pipeline was split into dedicated, high-speed modules:
 
 ```mermaid
 flowchart TD
-    A["Obfuscated Luau / Lua Script"] --> B["deobfuscator.py: Lexical Normalizer"]
+    A["Obfuscated Luau / Lua Script"] --> B["engine/syntax_normalizer.py"]
     B --> C["Linux Mock Sandbox (lua_bin/lua5.1)"]
     C -->|Dynamic Emulation| D["Raw Stdout Stream"]
     B -->|Fallback / Analysis| E["engine/static_decoder.py"]
@@ -91,10 +99,11 @@ flowchart TD
     G --> H["trace_to_lua.py"]
     H -->|Fast Regex Variable Resolution| I["Lua Code Reconstructor"]
     I --> J["engine/ast_optimizer.py"]
+    J --> K["engine/constant_inliner.py"]
     
-    J -->|Fold Math Expressions & Inline Aliases| K[".deobf.lua (Clean Lua Source)"]
-    C -->|Dump Memory Array| L[".constants.lua (Decoded Constants)"]
-    E -.->|Static Verify| L
+    K -->|Inline Constants & Unproxify Locals| L[".deobf.lua (Clean Lua Source)"]
+    C -->|Dump Memory Array| M[".constants.lua (Decoded Constants)"]
+    E -.->|Static Verify| M
 ```
 
 ---
@@ -103,13 +112,13 @@ flowchart TD
 
 Real-world test on production Prometheus-obfuscated scripts:
 
-| Benchmark Metric | Original Dumper | Epimetheus Engine (v2.5.0) | Improvement |
+| Benchmark Metric | Original Dumper | Epimetheus Engine (v2.6.0) | Improvement |
 | :--- | :--- | :--- | :--- |
 | **Heavy Script (~2.1 MB) Report** | 9.93 MB (231,175 lines) | **610 KB** (10,573 lines) | **-93.8% file size** |
 | **Complex Script (~2.5 MB) Report** | 10.59 MB (257,942 lines) | **775 KB** (13,158 lines) | **-92.8% file size** |
 | **Variable Resolution Speed** | ~1.61 s per chunk | **0.012 s** per chunk | **134x faster** |
 | **Workspace Footprint** | >26 MB | **5.9 MB** | **77% disk savings** |
-| **Unit Test Suite** | 9 tests (basic) | **25 tests** (100% passing) | **Full coverage** |
+| **Unit Test Suite** | 9 tests (basic) | **30 tests** (100% passing) | **Full coverage** |
 
 ---
 

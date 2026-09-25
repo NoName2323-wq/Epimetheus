@@ -204,5 +204,63 @@ class EngineStaticDecoderTests(unittest.TestCase):
         self.assertEqual(decrypted, expected)
 
 
+class EngineSyntaxNormalizerTests(unittest.TestCase):
+    def test_rewrite_compound_assignments(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = "local a = 1\na += 5\nb -= 2\nc *= 10\nd /= 2\ne %= 3\nf ^= 2\ng ..= 'test'\n"
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("a = a + 5", normalized)
+        self.assertIn("b = b - 2", normalized)
+        self.assertIn("c = c * 10", normalized)
+        self.assertIn("d = d / 2", normalized)
+        self.assertIn("e = e % 3", normalized)
+        self.assertIn("f = f ^ 2", normalized)
+        self.assertIn("g = g .. 'test'", normalized)
+
+    def test_preserve_string_literals_in_syntax_normalizer(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = 'local s = "do += not -= touch *= this"\n'
+        normalized = normalize_luau_syntax(code)
+        self.assertEqual(normalized, code)
+
+    def test_strip_type_annotations(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = "local x: number = 100\nlocal y: string? = 'abc'\n"
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("local x = 100", normalized)
+        self.assertIn("local y = 'abc'", normalized)
+
+
+class EngineConstantInlinerTests(unittest.TestCase):
+    def test_detect_wrapper_and_inline_constants(self):
+        from engine.constant_inliner import inline_constants_in_code
+
+        code = """
+local ARR = { "Players", "Workspace", "Lighting" }
+local function get_c(arg)
+    return ARR[arg + 10]
+end
+
+local s1 = get_c(-9)
+local s2 = get_c(-8)
+local s3 = get_c(-7)
+"""
+        inlined = inline_constants_in_code(code, constants=["Players", "Workspace", "Lighting"])
+        self.assertIn('local s1 = "Players"', inlined)
+        self.assertIn('local s2 = "Workspace"', inlined)
+        self.assertIn('local s3 = "Lighting"', inlined)
+
+    def test_unwrap_proxified_locals(self):
+        from engine.constant_inliner import ConstantInliner
+
+        inliner = ConstantInliner()
+        code = 'local p = setmetatable({ ["abc"] = 123 }, { __index = function() end })'
+        unwrapped = inliner.unwrap_proxified_locals(code)
+        self.assertEqual(unwrapped, "local p = 123")
+
+
 if __name__ == "__main__":
     unittest.main()
