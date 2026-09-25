@@ -7,7 +7,7 @@
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Платформа](https://img.shields.io/badge/Платформа-Только%20Linux-success?style=for-the-badge&logo=linux&logoColor=white)
 ![Лицензия](https://img.shields.io/badge/Лицензия-GNU%20GPLv3-yellow?style=for-the-badge)
-![Тесты](https://img.shields.io/badge/Тесты-33%20Модульных%20Теста-brightgreen?style=for-the-badge)
+![Тесты](https://img.shields.io/badge/Тесты-41%20Модульный%20Тест-brightgreen?style=for-the-badge)
 
 **Специализированный Linux-движок нового поколения для эмуляции трассировки, статического декодирования констант и AST-оптимизации обфусцированных скриптов Roblox Luau.**
 
@@ -34,7 +34,7 @@
 
 * **Название проекта:** **Epimetheus** (ранее *Prometheus-WeAre-Devs-Dumper*).
 * **Базовый проект:** Переработан и развит на основе [hutaoshusband/Prometheus-WeAre-Devs-Dumper](https://github.com/hutaoshusband/Prometheus-WeAre-Devs-Dumper). Изначальный форк разрабатывался как простая утилита исключительно под Windows.
-* **Сурсы обфускатора Prometheus:** Изучен и исследован по официальному исходному коду [Prometheus Obfuscator от levno-710 (версия v0.2.11.1)](https://github.com/prometheus-lua/Prometheus).
+* **Исходный код обфускатора Prometheus:** Изучен и исследован по официальному исходному коду [Prometheus Obfuscator от levno-710 (версия v0.2.11.1)](https://github.com/prometheus-lua/Prometheus).
 * **Атрибуция (Attribution):** Based on Prometheus by Elias Oelschner, https://github.com/prometheus-lua/Prometheus
 * **Эволюция в Epimetheus:** Код был фундаментально переработан в высокопроизводительный Linux-движок с модульной AST-оптимизацией, потоковой фильтрацией логов VM, чистым статическим декодером на Python и лексической нормализацией Luau.
 
@@ -123,7 +123,7 @@ flowchart TD
 | **Отчёт сложного скрипта (~2.5 МБ)** | 10.59 МБ (257 942 строки) | **775 КБ** (13 158 строк) | **-92.8% размера** |
 | **Скорость подстановки переменных** | ~1.61 сек на блок | **0.012 сек** на блок | **В 134 раза быстрее** |
 | **Объём рабочей директории** | >26 МБ | **5.9 МБ** | **Экономия 77% диска** |
-| **Набор тестов** | 9 тестов (базовые) | **31 модульный тест** (27 активных, 4 локальных) | **Комплексный набор тестов** |
+| **Набор тестов** | 9 тестов (базовые) | **41 модульный тест** (37 активных, 4 локальных) | **Комплексный набор тестов** |
 
 ---
 

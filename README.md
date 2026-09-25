@@ -7,7 +7,7 @@
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Only-success?style=for-the-badge&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-yellow?style=for-the-badge)
-![Tests](https://img.shields.io/badge/Tests-33%20Unit%20Tests-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-41%20Unit%20Tests-brightgreen?style=for-the-badge)
 
 **Linux-exclusive next-generation trace emulation, static constant decoding, and AST-optimized deobfuscation engine for Prometheus-protected Roblox Luau scripts.**
 
@@ -123,7 +123,7 @@ Real-world test on production Prometheus-obfuscated scripts:
 | **Complex Script (~2.5 MB) Report** | 10.59 MB (257,942 lines) | **775 KB** (13,158 lines) | **-92.8% file size** |
 | **Variable Resolution Speed** | ~1.61 s per chunk | **0.012 s** per chunk | **134x faster** |
 | **Workspace Footprint** | >26 MB | **5.9 MB** | **77% disk savings** |
-| **Unit Test Suite** | 9 tests (basic) | **31 unit tests** (27 active, 4 local fixtures) | **Comprehensive test suite** |
+| **Unit Test Suite** | 9 tests (basic) | **41 unit tests** (37 active, 4 local fixtures) | **Comprehensive test suite** |
 
 ---
 

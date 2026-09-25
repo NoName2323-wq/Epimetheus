@@ -256,6 +256,12 @@ class DeobfuscatorRegressionTests(unittest.TestCase):
         self.assertEqual(args[1], ' wrapper("x,y")')
         self.assertEqual(args[2], ' 42')
 
+        escaped_args = trace_to_lua.smart_split_args(r'"hello \"world, test\"", 100, {a = 1, b = 2}')
+        self.assertEqual(len(escaped_args), 3)
+        self.assertEqual(escaped_args[0], r'"hello \"world, test\""')
+        self.assertEqual(escaped_args[1].strip(), '100')
+        self.assertEqual(escaped_args[2].strip(), '{a = 1, b = 2}')
+
         lines = [
             "ACCESSED --> game",
             "CALL_RESULT --> local a = game:GetService()",

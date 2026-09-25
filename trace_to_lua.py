@@ -74,23 +74,29 @@ def smart_split_args(args_str):
     current = ""
     in_string = False
     string_char = None
+    escaped = False
 
     for ch in args_str:
         if in_string:
             current += ch
-            if ch == string_char:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == string_char:
                 in_string = False
             continue
 
-        if ch == '"' or ch == "'":
+        if ch in ('"', "'"):
             in_string = True
             string_char = ch
+            escaped = False
             current += ch
-        elif ch == '(':
+        elif ch in ('(', '[', '{'):
             depth += 1
             current += ch
-        elif ch == ')':
-            depth -= 1
+        elif ch in (')', ']', '}'):
+            depth = max(0, depth - 1)
             current += ch
         elif ch == ',' and depth == 0:
             result.append(current)

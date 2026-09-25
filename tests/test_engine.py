@@ -101,6 +101,34 @@ class EngineAstOptimizerTests(unittest.TestCase):
         self.assertNotIn('then return end', optimized)
         self.assertIn('local a = 1', optimized)
 
+    def test_ast_optimizer_preserves_literals_in_table_concat_and_watermarks(self):
+        code = (
+            'local s = "table.concat({\\"a\\", \\"b\\"})"\n'
+            '-- table.concat({"a", "b"})\n'
+            'local msg = "This Script is Part of the Prometheus Obfuscator by levno-710"\n'
+        )
+        optimized = optimize_lua_code(code)
+        self.assertIn('local s = "table.concat({\\"a\\", \\"b\\"})"', optimized)
+        self.assertIn('-- table.concat({"a", "b"})', optimized)
+        self.assertIn('local msg = "This Script is Part of the Prometheus Obfuscator by levno-710"', optimized)
+
+    def test_alias_propagation_preserves_object_fields_and_strings(self):
+        code = (
+            "local service = getService()\n"
+            "local alias = service\n"
+            'local text = "alias"\n'
+            "-- alias should stay\n"
+            "obj.alias = 123\n"
+            "obj:alias()\n"
+            "doSomething(alias)\n"
+        )
+        optimized = optimize_lua_code(code)
+        self.assertIn('local text = "alias"', optimized)
+        self.assertIn("-- alias should stay", optimized)
+        self.assertIn("obj.alias = 123", optimized)
+        self.assertIn("obj:alias()", optimized)
+        self.assertIn("doSomething(service)", optimized)
+
 
 class EngineStaticDecoderTests(unittest.TestCase):
     def test_unescape_and_escape_roundtrip(self):
@@ -270,6 +298,91 @@ class EngineSyntaxNormalizerTests(unittest.TestCase):
         self.assertIn('-- local x: number = 5', normalized)
         self.assertIn('--[[ function f(a: number): boolean ]]--', normalized)
         self.assertIn('local x = 10', normalized)
+
+    def test_long_bracket_strings_and_comments(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            'local s1 = [=[function f(a: number): boolean]=]\n'
+            'local s2 = [==[raw [[nested]] code]==]\n'
+            '--[=[ comment with ]] inside ]=]\n'
+            '--[==[ deep [[nested]] comment ]==]\n'
+            'local x: number = 20\n'
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn('local s1 = [=[function f(a: number): boolean]=]', normalized)
+        self.assertIn('local s2 = [==[raw [[nested]] code]==]', normalized)
+        self.assertIn('--[=[ comment with ]] inside ]=]', normalized)
+        self.assertIn('--[==[ deep [[nested]] comment ]==]', normalized)
+        self.assertIn('local x = 20', normalized)
+
+    def test_multiline_function_parameters(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "function foo(\n"
+            "    a: number,\n"
+            "    b: string\n"
+            "): boolean\n"
+            "    return true\n"
+            "end\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("function foo(a, b)", normalized)
+        self.assertNotIn("a: number", normalized)
+        self.assertNotIn("b: string", normalized)
+
+    def test_generic_functions(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "function identity<T>(val: T): T\n"
+            "    return val\n"
+            "end\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("function identity(val)", normalized)
+        self.assertNotIn("<T>", normalized)
+
+    def test_nested_return_types(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "function create_obj(n: number): {x: {y: string}}\n"
+            "    return {x = {y = 'hello'}}\n"
+            "end\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("function create_obj(n)", normalized)
+        self.assertNotIn(": {x: {y: string}}", normalized)
+        self.assertIn("return {x = {y = 'hello'}}", normalized)
+
+    def test_multiline_union_type_aliases(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "type Composite = \n"
+            "    { x: number }\n"
+            "    & { y: string }\n"
+            "    | { z: boolean }\n"
+            "local a = 1\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertNotIn("Composite", normalized)
+        self.assertNotIn("& { y: string }", normalized)
+        self.assertNotIn("| { z: boolean }", normalized)
+        self.assertIn("local a = 1", normalized)
+
+    def test_collision_safe_placeholders(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "local __EPIMETHEUS_STR_0__ = 123\n"
+            'local s = "hello"\n'
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("local __EPIMETHEUS_STR_0__ = 123", normalized)
+        self.assertIn('local s = "hello"', normalized)
 
 
 class EngineConstantInlinerTests(unittest.TestCase):

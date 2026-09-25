@@ -6,14 +6,14 @@ compatible syntax while strictly protecting string literals and comments:
 1. Compound assignment operators: +=, -=, *=, /=, %=, ^=, ..=
 2. Luau type annotations:
    - Standalone single-line and multiline type aliases: type Foo = { ... }
-   - Function parameter type annotations (including complex nested types)
+   - Function parameter type annotations (including complex nested types and generics)
    - Function return type annotations (simple, multiple, table)
    - Local variable type annotations (with and without initial value)
-3. Luau continue statement compatibility
 """
 
 from typing import List, Tuple, Optional, Dict
 import re
+import uuid
 
 
 COMPOUND_ASSIGNMENT_OPERATORS = ("+=", "-=", "*=", "/=", "%=", "^=", "..=")
@@ -23,10 +23,10 @@ def tokenize_lua_chunks(source: str) -> List[Tuple[str, str]]:
     """
     Split Lua source into (token_type, token_content) pairs.
     Token types:
-      - 'COMMENT_LONG'
-      - 'COMMENT_SHORT'
-      - 'STRING_LONG'
-      - 'STRING_SHORT'
+      - 'COMMENT_LONG' (e.g. --[[...]], --[=[...]=], etc.)
+      - 'COMMENT_SHORT' (e.g. --...)
+      - 'STRING_LONG' (e.g. [[...]], [=[...]=], etc.)
+      - 'STRING_SHORT' (e.g. "...", '...')
       - 'CODE'
     Guarantees strings and comments are never mutated by AST/lexical transformations.
     """
@@ -36,44 +36,54 @@ def tokenize_lua_chunks(source: str) -> List[Tuple[str, str]]:
     code_start = 0
 
     while idx < length:
-        # Check long comment --[[ ... ]]
-        if source.startswith("--[[", idx):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            end_comment = source.find("]]", idx + 4)
-            if end_comment == -1:
-                tokens.append(("COMMENT_LONG", source[idx:]))
-                return tokens
-            tokens.append(("COMMENT_LONG", source[idx : end_comment + 2]))
-            idx = end_comment + 2
-            code_start = idx
-            continue
-
-        # Check short comment --
+        # Check comments (-- or --[(=*)\[)
         if source.startswith("--", idx):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            end_nl = source.find("\n", idx + 2)
-            if end_nl == -1:
-                tokens.append(("COMMENT_SHORT", source[idx:]))
-                return tokens
-            tokens.append(("COMMENT_SHORT", source[idx:end_nl]))
-            idx = end_nl
-            code_start = idx
-            continue
+            m_comm = re.match(r"^--\[(=*)\[", source[idx:])
+            if m_comm:
+                if idx > code_start:
+                    tokens.append(("CODE", source[code_start:idx]))
+                eq_count = len(m_comm.group(1))
+                close_delim = "]" + ("=" * eq_count) + "]"
+                content_start = idx + len(m_comm.group(0))
+                close_pos = source.find(close_delim, content_start)
+                if close_pos == -1:
+                    tokens.append(("COMMENT_LONG", source[idx:]))
+                    return tokens
+                end_idx = close_pos + len(close_delim)
+                tokens.append(("COMMENT_LONG", source[idx:end_idx]))
+                idx = end_idx
+                code_start = idx
+                continue
+            else:
+                if idx > code_start:
+                    tokens.append(("CODE", source[code_start:idx]))
+                end_nl = source.find("\n", idx + 2)
+                if end_nl == -1:
+                    tokens.append(("COMMENT_SHORT", source[idx:]))
+                    return tokens
+                tokens.append(("COMMENT_SHORT", source[idx:end_nl]))
+                idx = end_nl
+                code_start = idx
+                continue
 
-        # Check long string [[ ... ]]
-        if source.startswith("[[", idx):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            end_str = source.find("]]", idx + 2)
-            if end_str == -1:
-                tokens.append(("STRING_LONG", source[idx:]))
-                return tokens
-            tokens.append(("STRING_LONG", source[idx : end_str + 2]))
-            idx = end_str + 2
-            code_start = idx
-            continue
+        # Check long strings [(=*)\[
+        if source.startswith("[", idx):
+            m_str = re.match(r"^\[(=*)\[", source[idx:])
+            if m_str:
+                if idx > code_start:
+                    tokens.append(("CODE", source[code_start:idx]))
+                eq_count = len(m_str.group(1))
+                close_delim = "]" + ("=" * eq_count) + "]"
+                content_start = idx + len(m_str.group(0))
+                close_pos = source.find(close_delim, content_start)
+                if close_pos == -1:
+                    tokens.append(("STRING_LONG", source[idx:]))
+                    return tokens
+                end_idx = close_pos + len(close_delim)
+                tokens.append(("STRING_LONG", source[idx:end_idx]))
+                idx = end_idx
+                code_start = idx
+                continue
 
         char = source[idx]
         # Check string literal '...' or "..."
@@ -199,6 +209,7 @@ def _strip_type_aliases(code: str) -> str:
     Remove standalone type alias statements (single-line or multiline table types):
         type Foo = { ... }
         export type Bar = ...
+        type UnionFoo = { x: number } & { y: string }
     """
     pattern = re.compile(r"\b(?:export\s+)?type\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*<[^>]*>)?\s*=")
     result = []
@@ -230,6 +241,12 @@ def _strip_type_aliases(code: str) -> str:
                 brace_depth = max(0, brace_depth - 1)
                 if brace_depth == 0 and paren_depth == 0 and bracket_depth == 0:
                     idx += 1
+                    look = idx
+                    while look < length and code[look].isspace():
+                        look += 1
+                    if look < length and code[look] in ('&', '|'):
+                        idx = look + 1
+                        continue
                     while idx < length and code[idx] in " \t":
                         idx += 1
                     if idx < length and code[idx] == ';':
@@ -245,6 +262,12 @@ def _strip_type_aliases(code: str) -> str:
                 bracket_depth = max(0, bracket_depth - 1)
             elif brace_depth == 0 and paren_depth == 0 and bracket_depth == 0:
                 if ch in (';', '\n'):
+                    look = idx + 1
+                    while look < length and code[look].isspace():
+                        look += 1
+                    if look < length and code[look] in ('&', '|'):
+                        idx = look + 1
+                        continue
                     if ch == ';':
                         idx += 1
                     break
@@ -330,20 +353,108 @@ def _clean_function_parameters(param_str: str) -> str:
 
 def _strip_function_type_annotations(code: str) -> str:
     """
-    Strips Luau parameter and return type annotations from function definitions:
-        function foo(a: any, b: {x: number}): boolean -> function foo(a, b)
+    Strips Luau parameter, generic, and return type annotations from function definitions:
+        function foo<T>(a: any, b: {x: {y: string}}): {x: {y: string}} -> function foo(a, b)
+    Supports multiline parameters, generic type arguments, and arbitrarily nested return types.
     """
-    def repl(m):
-        fn_name = m.group(1) or ""
-        params = m.group(2)
-        cleaned = _clean_function_parameters(params)
-        return f"function{fn_name}({cleaned})"
+    pattern = re.compile(r"\bfunction(\s+[a-zA-Z0-9_.:]+)?(?:\s*<[^>]*>)?\s*\(")
+    result = []
+    last_idx = 0
+    length = len(code)
 
-    return re.sub(
-        r"\bfunction(\s+[a-zA-Z0-9_.:]+)?\s*\((.*?)\)(?:\s*:\s*(?:\{[^}]*\}|\([^)]*\)|[a-zA-Z0-9_?|&<>.~]+))?",
-        repl,
-        code,
-    )
+    while True:
+        m = pattern.search(code, last_idx)
+        if not m:
+            result.append(code[last_idx:])
+            break
+
+        func_start = m.start()
+        fn_name = m.group(1) or ""
+        result.append(code[last_idx:func_start])
+
+        # Scan parameters inside balanced (...)
+        param_start = m.end()  # right after '('
+        idx = param_start
+        paren_depth = 1
+        brace_depth = 0
+        bracket_depth = 0
+        angle_depth = 0
+
+        while idx < length and paren_depth > 0:
+            ch = code[idx]
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                paren_depth -= 1
+                if paren_depth == 0:
+                    break
+            elif ch == '{':
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth = max(0, brace_depth - 1)
+            elif ch == '[':
+                bracket_depth += 1
+            elif ch == ']':
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == '<':
+                angle_depth += 1
+            elif ch == '>':
+                angle_depth = max(0, angle_depth - 1)
+            idx += 1
+
+        raw_params = code[param_start:idx]
+        cleaned_params = _clean_function_parameters(raw_params)
+        result.append(f"function{fn_name}({cleaned_params})")
+
+        # Now idx is pointing at the closing ')' of the parameter list
+        idx += 1  # move past ')'
+
+        # Check if there is a return type annotation: `:`
+        look = idx
+        while look < length and code[look].isspace():
+            look += 1
+
+        if look < length and code[look] == ':':
+            idx = look + 1
+            while idx < length and code[idx].isspace():
+                idx += 1
+
+            if idx < length and code[idx] == '{':
+                brace_depth = 1
+                idx += 1
+                while idx < length and brace_depth > 0:
+                    if code[idx] == '{':
+                        brace_depth += 1
+                    elif code[idx] == '}':
+                        brace_depth -= 1
+                    idx += 1
+            elif idx < length and code[idx] == '(':
+                paren_depth = 1
+                idx += 1
+                while idx < length and paren_depth > 0:
+                    if code[idx] == '(':
+                        paren_depth += 1
+                    elif code[idx] == ')':
+                        paren_depth -= 1
+                    idx += 1
+            else:
+                angle_depth = 0
+                while idx < length:
+                    ch = code[idx]
+                    if ch == '<':
+                        angle_depth += 1
+                    elif ch == '>':
+                        angle_depth = max(0, angle_depth - 1)
+                    elif angle_depth == 0:
+                        if ch.isspace() or ch in (';', '\n', '\r'):
+                            break
+                        if not (ch.isalnum() or ch in ('_', '.', '?', '|', '&', '~')):
+                            break
+                    idx += 1
+
+        last_idx = idx
+
+    return "".join(result)
 
 
 def _strip_local_type_annotations(code: str) -> str:
@@ -371,7 +482,13 @@ def mask_strings_and_comments(source: str) -> Tuple[str, Dict[str, str]]:
     """
     Replaces string literals and comments with safe identifier placeholders.
     Returns (masked_source, placeholder_map).
+    Guarantees zero collisions by choosing a unique prefix absent from source.
     """
+    while True:
+        prefix = f"__EPI_{uuid.uuid4().hex[:8]}_"
+        if prefix not in source:
+            break
+
     tokens = tokenize_lua_chunks(source)
     masked_parts = []
     mapping: Dict[str, str] = {}
@@ -380,17 +497,17 @@ def mask_strings_and_comments(source: str) -> Tuple[str, Dict[str, str]]:
 
     for token_type, content in tokens:
         if token_type in ("STRING_SHORT", "STRING_LONG"):
-            placeholder = f"__EPIMETHEUS_STR_{str_counter}__"
+            placeholder = f"{prefix}STR_{str_counter}__"
             str_counter += 1
             mapping[placeholder] = content
             masked_parts.append(placeholder)
         elif token_type == "COMMENT_SHORT":
-            placeholder = f"--__EPIMETHEUS_CMT_{cmt_counter}__"
+            placeholder = f"--{prefix}CMT_{cmt_counter}__"
             cmt_counter += 1
             mapping[placeholder] = content
             masked_parts.append(placeholder)
         elif token_type == "COMMENT_LONG":
-            placeholder = f"--[[__EPIMETHEUS_CMTL_{cmt_counter}__]]"
+            placeholder = f"--[[{prefix}CMTL_{cmt_counter}__]]"
             cmt_counter += 1
             mapping[placeholder] = content
             masked_parts.append(placeholder)

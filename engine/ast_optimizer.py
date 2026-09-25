@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import List, Tuple, Optional, Dict, Union
 import ast
 import re
+import uuid
 
 
 HEX_INT_PATTERN = re.compile(r"^0[xX][0-9a-fA-F]+$")
@@ -34,8 +35,12 @@ DOUBLE_NEG_PATTERN = re.compile(r"-\s*\(\s*-\s*([0-9a-zA-Z_]+)\s*\)")
 
 def parse_lua_string_token(token_type: str, lit: str) -> Optional[str]:
     """Parse a Lua string token into its unescaped raw string content."""
-    if token_type == "STRING_LONG" and lit.startswith("[[") and lit.endswith("]]"):
-        return lit[2:-2]
+    if token_type == "STRING_LONG":
+        m = re.match(r"^\[(=*)\[(.*)\]\1\]$", lit, re.DOTALL)
+        if m:
+            return m.group(2)
+        if lit.startswith("[[") and lit.endswith("]]"):
+            return lit[2:-2]
     if token_type == "STRING_SHORT" and len(lit) >= 2:
         inner = lit[1:-1]
 
@@ -103,10 +108,56 @@ def fold_string_concat_tokens(tokens: List[Tuple[str, str]]) -> List[Tuple[str, 
     return res
 
 
-def fold_table_concat_calls(code: str) -> str:
+def fold_table_concat_calls(
+    code: str,
+    mapping: Optional[Dict[str, str]] = None,
+    prefix: str = "",
+) -> str:
     """
     Fold static table.concat({"part1", "part2", ...}) calls into a single string literal.
+    When mapping and prefix are provided, operates safely on masked string placeholders.
     """
+    if mapping is not None and prefix:
+        pattern = re.compile(
+            rf'\btable\.concat\s*\(\s*\{{\s*([^{{}}]+?)\s*\}}\s*(?:,\s*({prefix}STR_\d+__|["\'][^"\']*["\']))?\s*\)'
+        )
+
+        def repl_masked(m):
+            raw_items = m.group(1)
+            sep_token = m.group(2)
+            sep = ""
+            if sep_token:
+                if sep_token in mapping:
+                    raw_sep = parse_lua_string_token("STRING_SHORT", mapping[sep_token])
+                    if raw_sep is None:
+                        raw_sep = parse_lua_string_token("STRING_LONG", mapping[sep_token])
+                    sep = raw_sep or ""
+                else:
+                    sep = sep_token.strip("'\"")
+
+            placeholders = re.findall(rf'{prefix}STR_\d+__', raw_items)
+            if placeholders:
+                parts = []
+                for ph in placeholders:
+                    if ph in mapping:
+                        raw_str = parse_lua_string_token("STRING_SHORT", mapping[ph])
+                        if raw_str is None:
+                            raw_str = parse_lua_string_token("STRING_LONG", mapping[ph])
+                        if raw_str is not None:
+                            parts.append(raw_str)
+                        else:
+                            return m.group(0)
+                    else:
+                        return m.group(0)
+                joined = sep.join(parts)
+                new_lit = escape_for_lua_literal(joined)
+                new_ph = f"{prefix}STR_{len(mapping)}__"
+                mapping[new_ph] = new_lit
+                return new_ph
+            return m.group(0)
+
+        return pattern.sub(repl_masked, code)
+
     pattern = re.compile(
         r'\btable\.concat\s*\(\s*\{\s*([^}]+?)\s*\}\s*(?:,\s*["\']([^"\']*)["\'])?\s*\)'
     )
@@ -123,11 +174,29 @@ def fold_table_concat_calls(code: str) -> str:
     return pattern.sub(repl, code)
 
 
-def strip_prometheus_watermarks(code: str) -> str:
+def strip_prometheus_watermarks(
+    code: str,
+    mapping: Optional[Dict[str, str]] = None,
+    prefix: str = "",
+) -> str:
     """
     Detect and strip Prometheus WatermarkCheck step dead branches:
         if _var ~= "This Script is Part of the Prometheus Obfuscator by levno-710" then return end
     """
+    if mapping is not None and prefix:
+        pattern = re.compile(
+            rf'if\s+\(?[a-zA-Z0-9_]+\s*~=\s*({prefix}STR_\d+__)\)?\s+then\s+return\s+end;?',
+            re.IGNORECASE,
+        )
+
+        def wm_repl(m):
+            ph = m.group(1)
+            if ph in mapping and "Prometheus" in mapping[ph]:
+                return "-- [Epimetheus: Stripped Prometheus watermark check]"
+            return m.group(0)
+
+        return pattern.sub(wm_repl, code)
+
     pattern = re.compile(
         r"if\s+\(?[a-zA-Z0-9_]+\s*~=\s*[\"'].*?Prometheus.*?[\"']\)?\s+then\s+return\s+end;?",
         re.IGNORECASE,
@@ -211,44 +280,54 @@ def split_lua_tokens(source: str) -> List[Tuple[str, str]]:
     code_start = 0
 
     while idx < length:
-        # Check long comment --[[ ... ]]
-        if source.startswith("--[[", idx):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            end_comment = source.find("]]", idx + 4)
-            if end_comment == -1:
-                tokens.append(("COMMENT_LONG", source[idx:]))
-                return tokens
-            tokens.append(("COMMENT_LONG", source[idx : end_comment + 2]))
-            idx = end_comment + 2
-            code_start = idx
-            continue
-
-        # Check short comment --
+        # Check comments (-- or --[(=*)\[)
         if source.startswith("--", idx):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            end_nl = source.find("\n", idx + 2)
-            if end_nl == -1:
-                tokens.append(("COMMENT_SHORT", source[idx:]))
-                return tokens
-            tokens.append(("COMMENT_SHORT", source[idx:end_nl]))
-            idx = end_nl
-            code_start = idx
-            continue
+            m_comm = re.match(r"^--\[(=*)\[", source[idx:])
+            if m_comm:
+                if idx > code_start:
+                    tokens.append(("CODE", source[code_start:idx]))
+                eq_count = len(m_comm.group(1))
+                close_delim = "]" + ("=" * eq_count) + "]"
+                content_start = idx + len(m_comm.group(0))
+                close_pos = source.find(close_delim, content_start)
+                if close_pos == -1:
+                    tokens.append(("COMMENT_LONG", source[idx:]))
+                    return tokens
+                end_idx = close_pos + len(close_delim)
+                tokens.append(("COMMENT_LONG", source[idx:end_idx]))
+                idx = end_idx
+                code_start = idx
+                continue
+            else:
+                if idx > code_start:
+                    tokens.append(("CODE", source[code_start:idx]))
+                end_nl = source.find("\n", idx + 2)
+                if end_nl == -1:
+                    tokens.append(("COMMENT_SHORT", source[idx:]))
+                    return tokens
+                tokens.append(("COMMENT_SHORT", source[idx:end_nl]))
+                idx = end_nl
+                code_start = idx
+                continue
 
-        # Check long string [[ ... ]]
-        if source.startswith("[[", idx):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            end_str = source.find("]]", idx + 2)
-            if end_str == -1:
-                tokens.append(("STRING_LONG", source[idx:]))
-                return tokens
-            tokens.append(("STRING_LONG", source[idx : end_str + 2]))
-            idx = end_str + 2
-            code_start = idx
-            continue
+        # Check long strings [(=*)\[
+        if source.startswith("[", idx):
+            m_str = re.match(r"^\[(=*)\[", source[idx:])
+            if m_str:
+                if idx > code_start:
+                    tokens.append(("CODE", source[code_start:idx]))
+                eq_count = len(m_str.group(1))
+                close_delim = "]" + ("=" * eq_count) + "]"
+                content_start = idx + len(m_str.group(0))
+                close_pos = source.find(close_delim, content_start)
+                if close_pos == -1:
+                    tokens.append(("STRING_LONG", source[idx:]))
+                    return tokens
+                end_idx = close_pos + len(close_delim)
+                tokens.append(("STRING_LONG", source[idx:end_idx]))
+                idx = end_idx
+                code_start = idx
+                continue
 
         char = source[idx]
         # Check string literal '...' or "..."
@@ -389,18 +468,19 @@ class AstOptimizer:
             m = copy_pattern.match(stripped)
             if m:
                 var_dst, var_src = m.group(1), m.group(2)
-                # Avoid circular or self assignments or Lua keywords
-                if var_dst != var_src and var_src not in alias_map and var_src not in LUA_KEYWORDS and var_dst not in LUA_KEYWORDS:
-                    alias_map[var_dst] = var_src
-                    # Drop the alias definition line
-                    continue
+                # Avoid placeholders, circular or self assignments, or Lua keywords
+                if not var_src.startswith("__EPI_") and not var_dst.startswith("__EPI_"):
+                    if var_dst != var_src and var_src not in alias_map and var_src not in LUA_KEYWORDS and var_dst not in LUA_KEYWORDS:
+                        alias_map[var_dst] = var_src
+                        # Drop the alias definition line
+                        continue
 
             # Apply existing aliases to line
             transformed_line = line
             for dst, src in alias_map.items():
                 if dst in transformed_line:
-                    # Word boundary replacement
-                    transformed_line = re.sub(rf"\b{re.escape(dst)}\b", src, transformed_line)
+                    # Word boundary replacement that EXCLUDES object fields (e.g. obj.alias or obj:alias)
+                    transformed_line = re.sub(rf"(?<![.:])\b{re.escape(dst)}\b", src, transformed_line)
 
             cleaned_lines.append(transformed_line)
 
@@ -409,6 +489,7 @@ class AstOptimizer:
     def optimize(self, lua_code: str) -> str:
         """
         Full optimization pipeline on Lua source code string.
+        Guarantees string literals and comments are never mutated.
         """
         tokens = split_lua_tokens(lua_code)
 
@@ -416,25 +497,51 @@ class AstOptimizer:
         if self.fold_strings:
             tokens = fold_string_concat_tokens(tokens)
 
-        optimized_parts = []
-        for token_type, content in tokens:
-            if token_type == "CODE":
-                optimized_parts.append(self.optimize_code_chunk(content))
-            else:
-                optimized_parts.append(content)
+        # Mask strings and comments with a collision-free prefix
+        while True:
+            prefix = f"__EPI_{uuid.uuid4().hex[:8]}_"
+            if prefix not in lua_code:
+                break
 
-        merged = "".join(optimized_parts)
+        masked_parts = []
+        mapping: Dict[str, str] = {}
+        str_counter = 0
+        cmt_counter = 0
+
+        for token_type, content in tokens:
+            if token_type in ("STRING_SHORT", "STRING_LONG"):
+                placeholder = f"{prefix}STR_{str_counter}__"
+                str_counter += 1
+                mapping[placeholder] = content
+                masked_parts.append(placeholder)
+            elif token_type == "COMMENT_SHORT":
+                placeholder = f"--{prefix}CMT_{cmt_counter}__"
+                cmt_counter += 1
+                mapping[placeholder] = content
+                masked_parts.append(placeholder)
+            elif token_type == "COMMENT_LONG":
+                placeholder = f"--[[{prefix}CMTL_{cmt_counter}__]]"
+                cmt_counter += 1
+                mapping[placeholder] = content
+                masked_parts.append(placeholder)
+            else:
+                chunk = content
+                if self.fold_constants:
+                    chunk = self.fold_math_expressions(chunk)
+                masked_parts.append(chunk)
+
+        masked = "".join(masked_parts)
 
         # Fold table.concat calls: table.concat({"a", "b", "c"}) -> "abc"
         if self.fold_strings:
-            merged = fold_table_concat_calls(merged)
+            masked = fold_table_concat_calls(masked, mapping, prefix)
 
         # Strip Prometheus watermark checks
         if self.strip_watermarks:
-            merged = strip_prometheus_watermarks(merged)
+            masked = strip_prometheus_watermarks(masked, mapping, prefix)
 
         # Line-by-line post-passes (alias propagation, dead code, blank lines)
-        lines = merged.splitlines()
+        lines = masked.splitlines()
         if self.propagate_copies or self.eliminate_dead_assignments:
             lines = self.propagate_copy_assignments(lines)
 
@@ -450,7 +557,13 @@ class AstOptimizer:
                 consecutive_blank = 0
                 final_lines.append(line)
 
-        return "\n".join(final_lines) + "\n"
+        unmasked = "\n".join(final_lines) + "\n"
+
+        # Restore strings and comments
+        for placeholder, original in sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True):
+            unmasked = unmasked.replace(placeholder, original)
+
+        return unmasked
 
 
 def optimize_lua_code(lua_code: str) -> str:
