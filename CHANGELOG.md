@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0] - 2026-09-25
+
+### Added
+- **Unified Zero-Copy Lexical Scanner (`engine/lua_lexer.py`)**:
+  - Centralized tokenizer replacing duplicated lexical scanners across `syntax_normalizer.py` and `ast_optimizer.py`.
+  - Uses precompiled regular expressions with index-based `pos` pointer matching, eliminating intermediate substring copies.
+- **Parallel Batch Processing (`--jobs` / `-j`)**:
+  - Added multiprocessing batch execution support via `concurrent.futures.ProcessPoolExecutor` (`--jobs <N|auto>`).
+  - Safely bounded concurrency (`min(requested_jobs, len(files), os.cpu_count() or 4)`) with strict default to `jobs=1` for complete backward compatibility.
+- **Lazy Engine Package Exports (`engine/__init__.py`)**:
+  - Implemented PEP 562 dynamic `__getattr__` exports in `engine/__init__.py` to eliminate eager imports of sub-engines.
+- **Epimetheus Benchmark Suite (`benchmarks/benchmark.py`)**:
+  - Added modular multi-stage benchmark tracking syntax normalization, AST optimization, trace filtering, math evaluation, and constant decoding throughput.
+- **Expanded Test Suite**:
+  - Added CLI version verification and batch parallel processing unit tests; test suite expanded to **54 tests** (50 active passing, 4 skipped).
+
+### Changed & Optimized
+- **Deferred Static Extraction & Subprocess Elimination**:
+  - Removed premature, unconditional Lua subprocess execution in `deobfuscator.py`; static table extraction is now lazily deferred to only trigger when the VM encounter compilation limits (`control structure too long`).
+  - Cached `get_lua_executable()` resolution via `@functools.lru_cache(maxsize=1)`.
+- **High-Speed AST Arithmetic Folding & Identifier-Based Alias Propagation**:
+  - Accelerated `safe_eval_math_expr` via direct binary pattern evaluation and `@functools.lru_cache(maxsize=4096)`, achieving over **18,000,000 evaluations/s** (>100x faster than Python AST compile/eval).
+  - Single regex replacement pass in `fold_math_expressions` with active modification tracking, eliminating nested string slicing.
+  - Replaced dynamic regex alternation recompilation in `propagate_copy_assignments` with set-intersection identifier extraction and `@functools.lru_cache` symbol boundaries, cutting AST optimization duration from ~1.8s down to **~0.20s** (~9x faster).
+- **In-Memory Trace Pipeline**:
+  - Introduced `parse_trace_lines()` in `trace_to_lua.py` allowing filtered VM lines to feed directly into the reconstructor without intermediate disk read round-trips.
+  - Removed `importlib.reload(trace_to_lua)` per-file overhead.
+- **Lua Sandbox Fast Paths**:
+  - Converted `exploit_funcs` in `MockEnv.__index__` from a sequential 60+ array search to an $O(1)$ hash table.
+  - Added fast normal-argument bypass paths to `safe_string` functions.
+  - Added fast substring checks (`res:find("http", 1, true)` and `res:find("www.", 1, true)`) before executing URL regular expressions in `table_concat` and `unpack`.
+- **Engine Hot-Path Regex & Memory Improvements**:
+  - `smart_split_args()` now uses list buffers and single-join operations instead of immutable string accumulation.
+  - `detect_loops()` normalizes lines up-front in a single pass and filters comparisons with tuple hashing.
+  - Pre-compiled all static regex patterns in `trace_to_lua.py` and `engine/static_decoder.py` at module level, with LRU-cached dynamic variable maps.
+  - Pre-computed power tuples in `decode_base64` and fast backslash pre-check in `unescape_lua_string`.
+
+---
+
 ## [2.6.0] - 2026-09-25
 
 ### Added

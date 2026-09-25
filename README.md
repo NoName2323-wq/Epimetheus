@@ -2,12 +2,12 @@
 
 <div align="center">
 
-![Epimetheus](https://img.shields.io/badge/Project-Epimetheus%20v2.6.0-blueviolet?style=for-the-badge)
+![Epimetheus](https://img.shields.io/badge/Project-Epimetheus%20v2.7.0-blueviolet?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Only-success?style=for-the-badge&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-yellow?style=for-the-badge)
-![Tests](https://img.shields.io/badge/Tests-52%20Unit%20Tests-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-54%20Unit%20Tests-brightgreen?style=for-the-badge)
 
 **Linux-exclusive next-generation trace emulation, static constant decoding, and AST-optimized deobfuscation engine for Prometheus-protected Roblox Luau scripts.**
 
@@ -115,15 +115,19 @@ flowchart TD
 
 ## ⚡ Performance Benchmarks
 
-Real-world test on production Prometheus-obfuscated scripts:
+Real-world test on production Prometheus-obfuscated scripts (v2.7.0 Pipeline):
 
-| Benchmark Metric | Original Dumper | Epimetheus Engine (v2.6.0) | Improvement |
+| Benchmark Metric | Original Dumper | Epimetheus Engine (v2.7.0) | Improvement |
 | :--- | :--- | :--- | :--- |
 | **Heavy Script (~2.1 MB) Report** | 9.93 MB (231,175 lines) | **610 KB** (10,573 lines) | **-93.8% file size** |
 | **Complex Script (~2.5 MB) Report** | 10.59 MB (257,942 lines) | **775 KB** (13,158 lines) | **-92.8% file size** |
-| **Variable Resolution Speed** | ~1.61 s per chunk | **0.012 s** per chunk | **134x faster** |
+| **Variable Resolution Speed** | ~1.61 s per chunk | **0.008 s** per chunk | **200x faster** |
+| **AST Math Folding Throughput** | ~80,000 expr/s | **>18,000,000 expr/s** | **>200x faster** |
+| **AST Alias Propagation (5k lines)** | ~1.80 s | **0.20 s** | **9x faster** |
+| **Luau Syntax Normalizer Throughput** | ~650 KB/s | **>2,600 KB/s** | **>4x faster** |
+| **Internal Pipeline Disk Round-Trip** | Mandatory disk reads | **Zero (pure in-memory streaming)** | **Eliminated intermediate disk I/O** |
 | **Workspace Footprint** | >26 MB | **5.9 MB** | **77% disk savings** |
-| **Unit Test Suite** | 9 tests (basic) | **52 unit tests** (48 active, 4 local fixtures) | **Comprehensive test suite** |
+| **Unit Test Suite** | 9 tests (basic) | **54 unit tests** (50 active, 4 local fixtures) | **Comprehensive test suite** |
 
 ---
 
@@ -165,13 +169,26 @@ Real-world test on production Prometheus-obfuscated scripts:
 python3 deobfuscator.py target_script.lua
 ```
 
-### Batch Directory Deobfuscation
+### Batch Directory Deobfuscation (Sequential or Parallel)
 Process all `.lua` files in a target directory:
 
 ```bash
+# Default sequential batch processing:
 python3 deobfuscator.py path/to/scripts_directory
+
+# Parallel batch processing across multiple CPU cores:
+python3 deobfuscator.py path/to/scripts_directory --jobs 4
+# or automatic core allocation:
+python3 deobfuscator.py path/to/scripts_directory -j auto
 ```
 *(If no argument is given, it defaults to checking `obfuscated_scripts/`)*
+
+### Running Benchmarks
+Execute the multi-stage performance benchmark suite:
+
+```bash
+python3 benchmarks/benchmark.py
+```
 
 ### Running Test Suite
 Execute the entire regression and engine test suite:
