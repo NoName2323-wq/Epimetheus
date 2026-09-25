@@ -15,6 +15,10 @@
 
 [English Version](README.md) • [История изменений (Changelog)](CHANGELOG.md)
 
+<br/>
+
+<img src="assets/cli_preview.png" alt="Интерфейс командной строки Epimetheus CLI" width="800"/>
+
 </div>
 
 ---

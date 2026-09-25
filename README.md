@@ -15,6 +15,10 @@
 
 [Русская версия (Russian Version)](README.ru.md) • [Changelog](CHANGELOG.md)
 
+<br/>
+
+<img src="assets/cli_preview.png" alt="Epimetheus CLI Preview" width="800"/>
+
 </div>
 
 ---
