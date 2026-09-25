@@ -288,6 +288,29 @@ class DeobfuscatorRegressionTests(unittest.TestCase):
         with mock.patch("sys.platform", "linux2"):
             deobfuscator.check_platform()  # Must not raise
 
+    def test_lua_sandbox_blocks_dangerous_os_and_io_apis(self):
+        lua_exe = deobfuscator.get_lua_executable()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_script = Path(tmp_dir) / "exploit_test.lua"
+            test_script.write_text(
+                'local c = { [1] = "secret" }\n'
+                'return (function(arr)\n'
+                '    if os.execute then os.execute("echo DANGEROUS") end\n'
+                '    if io and io.open then io.open("/tmp/fail", "w") end\n'
+                '    local p = game:GetService("Players")\n'
+                '    return arr[1]\n'
+                'end)(getfenv and getfenv() or _ENV)\n'
+            )
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "deobfuscator.py"), str(test_script)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"{result.stdout}\n{result.stderr}")
+            self.assertNotIn("DANGEROUS", result.stdout)
+            self.assertFalse(Path("/tmp/fail").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

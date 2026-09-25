@@ -7,7 +7,7 @@
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Only-success?style=for-the-badge&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-yellow?style=for-the-badge)
-![Tests](https://img.shields.io/badge/Tests-30%20Unit%20Tests-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-31%20Unit%20Tests-brightgreen?style=for-the-badge)
 
 **Linux-exclusive next-generation trace emulation, static constant decoding, and AST-optimized deobfuscation engine for Prometheus-protected Roblox Luau scripts.**
 
@@ -53,7 +53,7 @@ The processing pipeline was split into dedicated, high-speed modules:
 
 * **[`engine/syntax_normalizer.py`](engine/syntax_normalizer.py) (Luau Syntax Normalizer):**
   - **Compound Assignment Desugaring:** Automatically rewrites Luau compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `^=`, `..=`) into standard Lua 5.1 syntax (e.g. `x += 5` $\rightarrow$ `x = x + 5`) while strictly preserving string literals, nested parentheses, and comments.
-  - **Luau Type Annotation Stripping:** Removes type annotations (e.g. `local x: number = 1` $\rightarrow$ `local x = 1`, `type Foo = ...`) to prevent standard Lua 5.1 compiler parse errors.
+  - **Comprehensive Luau Type Annotation Stripping:** Strips standalone type alias statements (`type Foo = ...`, `export type Bar = ...`), function parameter annotations, multiple return types (`function foo(a: any, b: number): boolean` $\rightarrow$ `function foo(a, b)`), and typed local declarations (`local x: number = 1` $\rightarrow$ `local x = 1`, `local z: Vector3` $\rightarrow$ `local z`) to guarantee standard Lua 5.1 parser compatibility.
 
 * **[`engine/constant_inliner.py`](engine/constant_inliner.py) (Constant Inliner & Wrapper Unwrapper):**
   - **Prometheus ConstantArray Wrapper Inlining:** Reverse-engineers `ConstantArray.lua` wrapper functions (`local function wrapper(a) return ARR[a + offset] end`) and replaces wrapper calls (`wrapper(15)`) with inlined decoded constants directly into the deobfuscated Lua output.
@@ -83,7 +83,7 @@ The processing pipeline was split into dedicated, high-speed modules:
 
 ### 3. Core Engine Revamp & Speedup
 * **130x Faster Variable Resolution (`trace_to_lua.py`):** Replaced an $O(N \cdot M)$ sequential loop of `re.sub` over thousands of keys with a single compiled regular expression alternation `\b(var1|var2|...)\b`, reducing replacement time from **1.61s down to 0.012s**.
-* **Global Environment Robustness:** Enhanced `MockEnv` with fallback metatable indexing for `_G` and `getfenv()`, preventing `nil` index errors when Prometheus scripts dynamically access global Roblox services.
+* **Hardened Sandbox Isolation:** Dangerous host OS/IO libraries (`io`, `package`, `os.execute`, `os.remove`, `os.rename`, `os.exit`, `dofile`, `loadfile`) are completely purged from both `MockEnv` and the root interpreter environment. Replaced with sanitized dummy handlers and a restricted `safe_os` (`clock`, `time`, `difftime`, `date`). Enforces chunk-level isolation through `setfenv(1, MockEnv)`.
 * **Sandbox Anti-Tamper Hardening:** Added canary protection, line hook neutralization, dummy method chains, and sandbox memory limits (`LUA_MAX_SBX`) to bypass Prometheus environment checks.
 * **Streamlined Workflow:** The bloated web server viewer (`viewer.py`) has been removed. Because reports and deobfuscated scripts are now cleanly compressed, they open instantaneously in any standard editor (VS Code, Sublime Text, Notepad++, vim) without lag.
 
@@ -123,7 +123,7 @@ Real-world test on production Prometheus-obfuscated scripts:
 | **Complex Script (~2.5 MB) Report** | 10.59 MB (257,942 lines) | **775 KB** (13,158 lines) | **-92.8% file size** |
 | **Variable Resolution Speed** | ~1.61 s per chunk | **0.012 s** per chunk | **134x faster** |
 | **Workspace Footprint** | >26 MB | **5.9 MB** | **77% disk savings** |
-| **Unit Test Suite** | 9 tests (basic) | **30 unit tests** (26 active, 4 local fixtures) | **Comprehensive test suite** |
+| **Unit Test Suite** | 9 tests (basic) | **31 unit tests** (27 active, 4 local fixtures) | **Comprehensive test suite** |
 
 ---
 

@@ -23,9 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added metatable fallback indexing for `_G` and `getfenv()` to return `MockEnv`, preventing nil dereference crashes when obfuscated closures dynamically query global Roblox instances (`game`, `workspace`, etc.).
 - **Expanded Test Suite**:
   - Added test suites `EngineSyntaxNormalizerTests` and `EngineConstantInlinerTests` to [`tests/test_engine.py`](tests/test_engine.py).
-  - Test suite expanded to **30 unit tests** (100% passing).
+  - Test suite expanded to **31 unit tests** (27 active tests, 4 local fixture tests).
 
 ### Changed & Fixed
+- **Lua Sandbox Security Hardening**:
+  - Completely neutralized dangerous host OS/IO APIs (`io`, `package`, `os.execute`, `os.remove`, `os.rename`, `os.exit`, `os.tmpname`, `os.getenv`, `dofile`, `loadfile`) from both `MockEnv` and the root interpreter environment.
+  - Replaced with strictly isolated `safe_os` (`os.clock`, `os.time`, `os.difftime`, `os.date`), dummy mocks for `io`/`package`, and enforced chunk environment isolation via `setfenv(1, MockEnv)`.
+  - Restricted `safe_debug` to a strict whitelist of functions required for anti-tamper compatibility (`getinfo`, `getupvalue`, `sethook`, `traceback`).
+  - Added regression test `test_lua_sandbox_blocks_dangerous_os_and_io_apis` in `tests/test_deobfuscator.py`.
+- **Full Luau Type Annotation Stripping**:
+  - Upgraded `engine/syntax_normalizer.py` to comprehensively strip standalone type alias declarations (`type Foo = ...`, `export type Bar = ...`), function parameter annotations, multiple return types, and unassigned typed locals (`local x: Type`).
+- **Python 3.9 Compatibility Fix**:
+  - Added `from __future__ import annotations` and migrated from PEP 604 union pipes to `typing.Union` across `engine/ast_optimizer.py` and `engine/static_decoder.py`, resolving GitHub Actions CI import failures on Python 3.9.
 - **Strict Host Platform Enforcement**:
   - Replaced partial Windows-only check with strict Linux platform validation (`sys.platform.startswith("linux")`), properly blocking macOS (`darwin`), BSD, and Windows from execution.
   - Expanded unit test `test_check_platform_blocks_non_linux` to verify rejection across `win32`, `darwin`, `freebsd`, `cygwin`, and `sunos5`.
@@ -33,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added Python 3.9 to the GitHub Actions test matrix (`["3.9", "3.10", "3.11", "3.12"]`), ensuring full automated testing for all advertised Python versions.
 - **Documentation & Legal Attribution**:
   - Added formal upstream attribution for Prometheus by Elias Oelschner (`https://github.com/prometheus-lua/Prometheus`) to `README.md` and `README.ru.md`.
-  - Clarified test suite documentation and badges (30 unit tests with 26 active tests and 4 local fixture tests).
+  - Clarified test suite documentation and badges (31 unit tests with 27 active tests and 4 local fixture tests).
 
 ---
 

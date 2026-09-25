@@ -217,15 +217,45 @@ class LuauSyntaxNormalizer:
     def strip_type_annotations(self, content: str) -> str:
         """
         Strips Luau type annotations:
+            type Point = { x: number, y: number } -> [stripped]
             local x: number = 10 -> local x = 10
             local y: string? = nil -> local y = nil
+            local z: Vector3 -> local z
             function foo(a: any, b: number): boolean -> function foo(a, b)
         """
-        # Match `local var: Type = val`
+        # 1. Strip standalone type alias declarations: `type Foo = ...` or `export type Foo = ...`
         res = re.sub(
-            r"\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_?|&<>,\s]+\s*=",
-            r"local \1 =",
+            r"^[ \t]*(?:export\s+)?type\s+[a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]*>)?\s*=\s*.*$",
+            "",
             content,
+            flags=re.MULTILINE,
+        )
+
+        # 2. Strip function signatures: parameters & return types
+        def clean_func_sig(m):
+            fn_decl = m.group(1) or ""
+            params = m.group(2)
+            clean_params = re.sub(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[^,)]+", r"\1", params)
+            return f"function{fn_decl}({clean_params})"
+
+        res = re.sub(
+            r"\bfunction(\s+[a-zA-Z0-9_.:]+)?\s*\(([^)]*)\)\s*(?::\s*(?:\([^)]*\)|[a-zA-Z0-9_?|&<>.~{}]+))?",
+            clean_func_sig,
+            res,
+        )
+
+        # 3. Strip `local var: Type = `
+        res = re.sub(
+            r"\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_?|&<>.~{}\s]+?\s*=",
+            r"local \1 =",
+            res,
+        )
+
+        # 4. Strip `local var: Type` (without assignment)
+        res = re.sub(
+            r"\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_?|&<>.~{}\s]+?(?=[;\n\r]|$)",
+            r"local \1",
+            res,
         )
         return res
 

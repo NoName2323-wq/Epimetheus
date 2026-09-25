@@ -517,34 +517,50 @@ safe_string.dump = function(f)
     return string.dump(f)
 end
 
-local safe_debug = {}
-if debug then
-    for k, v in pairs(debug) do safe_debug[k] = v end
-    local real_getinfo = debug.getinfo
-    safe_debug.getinfo = function(f, ...)
-        local info = real_getinfo(f, ...)
-        if info then
-            if f == safe_string.char or f == safe_string.dump or f == pcall or f == xpcall then
-                info.what = "C"
-                info.source = "=[C]"
-                info.linedefined = -1
-                info.lastlinedefined = -1
-                info.short_src = "[C]"
+local safe_debug = {
+    ["getinfo"] = function(f, ...)
+        if debug and debug.getinfo then
+            local info = debug.getinfo(f, ...)
+            if info then
+                if f == safe_string.char or f == safe_string.dump or f == pcall or f == xpcall then
+                    info.what = "C"
+                    info.source = "=[C]"
+                    info.linedefined = -1
+                    info.lastlinedefined = -1
+                    info.short_src = "[C]"
+                end
             end
+            return info
         end
-        return info
-    end
-    safe_debug.getupvalue = function(f, n)
+        return nil
+    end,
+    ["getupvalue"] = function(f, n)
         if f == safe_string.char or f == safe_string.dump then
             return nil
         end
-        return debug.getupvalue(f, n)
-    end
-    safe_debug.sethook = function(...)
+        if debug and debug.getupvalue then
+            return debug.getupvalue(f, n)
+        end
+        return nil
+    end,
+    ["sethook"] = function(...)
         -- Disarm Prometheus AntiTamper line-based hook
         return
+    end,
+    ["traceback"] = function(...)
+        if debug and debug.traceback then
+            return debug.traceback(...)
+        end
+        return ""
     end
-end
+}
+
+local safe_os = {
+    ["clock"] = (os and os.clock) or function() return 0 end,
+    ["time"] = (os and os.time) or function() return 0 end,
+    ["difftime"] = (os and os.difftime) or function(a, b) return (a or 0) - (b or 0) end,
+    ["date"] = (os and os.date) or function() return "" end,
+}
 
 local MockEnv = {}
 local safe_globals = {
@@ -573,7 +589,7 @@ local safe_globals = {
     ["typeof"] = typeof,
     ["pcall"] = pcall,
     ["xpcall"] = xpcall,
-    ["getfenv"] = getfenv,
+    ["getfenv"] = function(target) return MockEnv end,
     ["setmetatable"] = setmetatable,
     ["getmetatable"] = getmetatable,
     ["error"] = error,
@@ -588,12 +604,18 @@ local safe_globals = {
     ["_VERSION"] = _VERSION,
     ["rawset"] = rawset,
     ["rawget"] = rawget,
-    ["os"] = os,
-    ["io"] = io,
-    ["package"] = package,
+    ["os"] = safe_os,
+    ["io"] = create_dummy("io"),
+    ["package"] = create_dummy("package"),
     ["debug"] = safe_debug,
-    ["dofile"] = dofile,
-    ["loadfile"] = loadfile,
+    ["dofile"] = function(f)
+        real_print("SANDBOX BLOCKED DOFILE --> " .. tostring(f))
+        return function(...) return create_dummy("FileModule") end
+    end,
+    ["loadfile"] = function(f)
+        real_print("SANDBOX BLOCKED LOADFILE --> " .. tostring(f))
+        return function(...) return create_dummy("FileModule") end
+    end,
     ["loadstring"] = function(s) 
         print("LOADSTRING DETECTED: size=" .. tostring(#s)) 
         print("LOADSTRING CONTENT START")
@@ -687,6 +709,23 @@ safe_globals["shared"] = MockEnv
 _G.print = safe_globals["print"]
 _G.warn = safe_globals["print"]
 setmetatable(_G, { __index = MockEnv })
+
+-- Purge dangerous host globals from interpreter environment before executing untrusted code
+io = nil
+package = nil
+dofile = safe_globals["dofile"]
+loadfile = safe_globals["loadfile"]
+if os then
+    os.execute = nil
+    os.remove = nil
+    os.rename = nil
+    os.exit = nil
+    os.tmpname = nil
+    os.getenv = nil
+end
+debug = safe_debug
+
+setfenv(1, MockEnv)
 """
 
     idx_args = content.rfind("(getfenv")

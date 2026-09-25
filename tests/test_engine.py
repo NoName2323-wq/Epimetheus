@@ -228,10 +228,23 @@ class EngineSyntaxNormalizerTests(unittest.TestCase):
     def test_strip_type_annotations(self):
         from engine.syntax_normalizer import normalize_luau_syntax
 
-        code = "local x: number = 100\nlocal y: string? = 'abc'\n"
+        code = (
+            "type Point = { x: number, y: number }\n"
+            "export type UserID = string\n"
+            "local x: number = 100\n"
+            "local y: string? = 'abc'\n"
+            "local z: Vector3\n"
+            "function calculate(a: any, b: number): boolean return true end\n"
+            "local function get_pair(k: string): (number, string) return 1, k end\n"
+        )
         normalized = normalize_luau_syntax(code)
+        self.assertNotIn("type Point", normalized)
+        self.assertNotIn("export type UserID", normalized)
         self.assertIn("local x = 100", normalized)
         self.assertIn("local y = 'abc'", normalized)
+        self.assertIn("local z\n", normalized)
+        self.assertIn("function calculate(a, b) return true end", normalized)
+        self.assertIn("local function get_pair(k) return 1, k end", normalized)
 
 
 class EngineConstantInlinerTests(unittest.TestCase):
