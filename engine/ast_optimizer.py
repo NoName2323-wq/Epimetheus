@@ -447,15 +447,41 @@ class AstOptimizer:
         """
         Eliminate redundant aliases:
             local var_B = var_A
-        where var_B is purely an alias for var_A.
+        where var_B is purely an immutable alias for var_A.
+        Guarantees that:
+        1. Chained aliases (local b = a; local c = b) resolve to their canonical root (a).
+        2. Variables that are mutated or reassigned anywhere in the chunk are NEVER propagated,
+           preserving exact program semantics and variable values.
+        3. Object fields (obj.alias, obj:alias) are never mutated.
         """
         alias_map: Dict[str, str] = {}
         cleaned_lines: List[str] = []
 
-        # Simple assignment matcher: local b = a (both must be valid identifiers, not numbers or keywords)
         copy_pattern = re.compile(r"^\s*local\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$")
         self_assign_pattern = re.compile(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\1\s*$")
+        lhs_assign_pattern = re.compile(r"^\s*(?:local\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*=(?!=)")
         LUA_KEYWORDS = {"true", "false", "nil", "function", "return", "end", "not", "and", "or"}
+
+        # Pass 1: Count LHS assignments per variable to determine mutability
+        assignment_counts: Dict[str, int] = {}
+        for line in lines:
+            stripped = line.strip()
+            if self.eliminate_dead_assignments and self_assign_pattern.match(stripped):
+                continue
+            m = lhs_assign_pattern.match(stripped)
+            if m:
+                var = m.group(1)
+                assignment_counts[var] = assignment_counts.get(var, 0) + 1
+
+        def resolve_root(var: str) -> str:
+            visited = set()
+            curr = var
+            while curr in alias_map:
+                if curr in visited:
+                    break
+                visited.add(curr)
+                curr = alias_map[curr]
+            return curr
 
         for line in lines:
             stripped = line.strip()
@@ -468,11 +494,18 @@ class AstOptimizer:
             m = copy_pattern.match(stripped)
             if m:
                 var_dst, var_src = m.group(1), m.group(2)
-                # Avoid placeholders, circular or self assignments, or Lua keywords
                 if not var_src.startswith("__EPI_") and not var_dst.startswith("__EPI_"):
-                    if var_dst != var_src and var_src not in alias_map and var_src not in LUA_KEYWORDS and var_dst not in LUA_KEYWORDS:
-                        alias_map[var_dst] = var_src
-                        # Drop the alias definition line
+                    root_src = resolve_root(var_src)
+                    # Only eliminate alias if neither dst nor root_src is reassigned
+                    if (
+                        assignment_counts.get(root_src, 0) <= 1
+                        and assignment_counts.get(var_dst, 0) <= 1
+                        and root_src != var_dst
+                        and root_src not in LUA_KEYWORDS
+                        and var_dst not in LUA_KEYWORDS
+                    ):
+                        alias_map[var_dst] = root_src
+                        # Drop the redundant alias definition line
                         continue
 
             # Apply existing aliases to line

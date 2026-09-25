@@ -23,9 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added metatable fallback indexing for `_G` and `getfenv()` to return `MockEnv`, preventing nil dereference crashes when obfuscated closures dynamically query global Roblox instances (`game`, `workspace`, etc.).
 - **Expanded Test Suite**:
   - Added test suites `EngineSyntaxNormalizerTests` and `EngineConstantInlinerTests` to [`tests/test_engine.py`](tests/test_engine.py).
-  - Test suite expanded to **41 unit tests** (37 active tests, 4 local fixture tests).
+  - Test suite expanded to **44 unit tests** (40 active tests, 4 local fixture tests).
 
 ### Changed & Fixed
+- **Chained Alias Propagation & Variable Mutability Tracking**:
+  - Enhanced `propagate_copy_assignments` in `engine/ast_optimizer.py` with transitive alias chain resolution (`local b = a; local c = b` correctly propagates `c` to `a` without leaving dangling references).
+  - Implemented variable mutability detection: variables reassigned anywhere in the chunk (`assignment_counts[var] > 1`) are strictly preserved, preventing invalid propagation across mutating assignments (e.g., `local a = 1; local b = a; a = 2; print(b)`).
+  - Added mask protection preventing placeholder tokens (`__EPI_`) from being erroneously processed as local variable aliases.
+- **Luau Function Variable Types & Type Cast Operator Stripping**:
+  - Implemented balanced parser in `engine/syntax_normalizer.py` for variable-level Luau function type signatures (`local cb: (amount: number) -> number`, `local fn: <T>(T) -> T = id`), stripping types while preserving defaults and initializers.
+  - Added `_strip_type_casts` to strip Luau type casting expressions (`expr :: Type`, `(val :: any):Method()`) down to valid Lua 5.1 syntax without corrupting parenthesized expressions or method calls.
 - **Full Lua Long-Bracket Support (`[(=*)\[` and `--[(=*)\[`)**:
   - Enhanced tokenizer across `engine/syntax_normalizer.py` and `engine/ast_optimizer.py` to support arbitrary `=` level long brackets (`[=[...]=]`, `[==[...]==]`, `--[=[...]=]`), preventing syntax errors and unwanted mutation of raw Lua code blocks.
 - **Robust Multiline, Generic, and Nested Function Type Stripping**:

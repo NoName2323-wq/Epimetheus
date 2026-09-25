@@ -462,20 +462,143 @@ def _strip_local_type_annotations(code: str) -> str:
     Strips type annotations from local variables:
         local x: number = 10 -> local x = 10
         local z: Vector3 -> local z
+        local cb: (amount: number) -> number -> local cb
+        local f: <T>(T) -> T = func -> local f = func
     """
-    # 1. local var: Type =
-    res = re.sub(
-        r"\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_?|&<>.~{}\s]+?\s*=",
-        r"local \1 =",
-        code,
-    )
-    # 2. local var: Type (without =)
-    res = re.sub(
-        r"\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_?|&<>.~{}\s]+?(?=[;\n\r]|$)",
-        r"local \1",
-        res,
-    )
-    return res
+    pattern = re.compile(r"\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:(?!:)")
+    result = []
+    last_idx = 0
+    length = len(code)
+
+    while True:
+        m = pattern.search(code, last_idx)
+        if not m:
+            result.append(code[last_idx:])
+            break
+
+        var_name = m.group(1)
+        start_pos = m.start()
+        result.append(code[last_idx:start_pos])
+
+        idx = m.end()
+        paren_depth = 0
+        brace_depth = 0
+        bracket_depth = 0
+        angle_depth = 0
+
+        while idx < length:
+            ch = code[idx]
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                paren_depth = max(0, paren_depth - 1)
+            elif ch == '{':
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth = max(0, brace_depth - 1)
+            elif ch == '[':
+                bracket_depth += 1
+            elif ch == ']':
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == '<':
+                angle_depth += 1
+            elif ch == '>':
+                angle_depth = max(0, angle_depth - 1)
+            elif paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                if ch == '=':
+                    result.append(f"local {var_name} =")
+                    idx += 1
+                    break
+                elif ch in (';', '\n', '\r'):
+                    result.append(f"local {var_name}")
+                    break
+                elif ch in (" ", "\t"):
+                    look = idx
+                    while look < length and code[look] in (" ", "\t"):
+                        look += 1
+                    if look < length and code[look] == '=':
+                        result.append(f"local {var_name} =")
+                        idx = look + 1
+                        break
+                    elif look >= length or code[look] in (';', '\n', '\r'):
+                        result.append(f"local {var_name}")
+                        idx = look
+                        break
+            idx += 1
+
+        if idx >= length and (paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0):
+            result.append(f"local {var_name}")
+
+        last_idx = idx
+
+    return "".join(result)
+
+
+def _strip_type_casts(code: str) -> str:
+    """
+    Strips Luau type cast operator expressions:
+        expr :: Type -> expr
+        (val :: any):Method() -> (val):Method()
+        local x = something :: number -> local x = something
+    """
+    pattern = re.compile(r"::")
+    result = []
+    last_idx = 0
+    length = len(code)
+
+    while True:
+        m = pattern.search(code, last_idx)
+        if not m:
+            result.append(code[last_idx:])
+            break
+
+        cast_pos = m.start()
+        # Keep code before '::', trimming trailing spaces before '::'
+        result.append(code[last_idx:cast_pos].rstrip(" \t"))
+
+        idx = m.end()
+        while idx < length and code[idx].isspace():
+            idx += 1
+
+        paren_depth = 0
+        brace_depth = 0
+        bracket_depth = 0
+        angle_depth = 0
+
+        while idx < length:
+            ch = code[idx]
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                if paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                    break
+                paren_depth = max(0, paren_depth - 1)
+            elif ch == '{':
+                brace_depth += 1
+            elif ch == '}':
+                if brace_depth == 0 and paren_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                    break
+                brace_depth = max(0, brace_depth - 1)
+            elif ch == '[':
+                bracket_depth += 1
+            elif ch == ']':
+                if bracket_depth == 0 and paren_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                    break
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == '<':
+                angle_depth += 1
+            elif ch == '>':
+                angle_depth = max(0, angle_depth - 1)
+            elif paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                if ch in (',', ';', '\n', '\r', ':'):
+                    break
+                if not (ch.isalnum() or ch in ('_', '.', '?', '|', '&', '-', '>')):
+                    break
+            idx += 1
+
+        last_idx = idx
+
+    return "".join(result)
 
 
 def mask_strings_and_comments(source: str) -> Tuple[str, Dict[str, str]]:
@@ -576,15 +699,18 @@ class LuauSyntaxNormalizer:
 
     def strip_type_annotations(self, code_chunk: str) -> str:
         """
-        Strips Luau type annotations from code:
+        Strips Luau type annotations and type casts from code:
             - type Foo = ... (single or multiline)
-            - function foo(a: any, b: number): boolean
+            - function foo<T>(a: any, b: number): boolean
             - local x: number = 10
+            - local cb: (amount: number) -> number
             - local z: Vector3
+            - expr :: Type (type cast operator)
         """
         chunk = _strip_type_aliases(code_chunk)
         chunk = _strip_function_type_annotations(chunk)
         chunk = _strip_local_type_annotations(chunk)
+        chunk = _strip_type_casts(chunk)
         return chunk
 
     def normalize(self, content: str) -> str:

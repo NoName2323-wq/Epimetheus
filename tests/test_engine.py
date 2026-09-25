@@ -129,6 +129,31 @@ class EngineAstOptimizerTests(unittest.TestCase):
         self.assertIn("obj:alias()", optimized)
         self.assertIn("doSomething(service)", optimized)
 
+    def test_alias_propagation_chaining_and_mutability(self):
+        # Case 1: Chained immutable aliases: local b = a, local c = b -> print(c) resolves to print(a)
+        chain_code = (
+            "local a = getSomething()\n"
+            "local b = a\n"
+            "local c = b\n"
+            "print(c)\n"
+        )
+        opt_chain = optimize_lua_code(chain_code)
+        self.assertNotIn("local b = a", opt_chain)
+        self.assertNotIn("local c = b", opt_chain)
+        self.assertIn("print(a)", opt_chain)
+
+        # Case 2: Mutated/reassigned source: a is reassigned, so local b = a must NOT be eliminated
+        mut_code = (
+            "local a = 1\n"
+            "local b = a\n"
+            "a = 2\n"
+            "print(b)\n"
+        )
+        opt_mut = optimize_lua_code(mut_code)
+        self.assertIn("local b = a", opt_mut)
+        self.assertIn("a = 2", opt_mut)
+        self.assertIn("print(b)", opt_mut)
+
 
 class EngineStaticDecoderTests(unittest.TestCase):
     def test_unescape_and_escape_roundtrip(self):
@@ -383,6 +408,37 @@ class EngineSyntaxNormalizerTests(unittest.TestCase):
         normalized = normalize_luau_syntax(code)
         self.assertIn("local __EPIMETHEUS_STR_0__ = 123", normalized)
         self.assertIn('local s = "hello"', normalized)
+
+    def test_function_type_variable_annotations(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "local cb: (amount: number) -> number\n"
+            "local cb2: (amount: number) -> number = function(x) return x end\n"
+            "local x: (number, string) -> boolean\n"
+            "local f: <T>(T) -> T = id\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("local cb\n", normalized)
+        self.assertIn("local cb2 = function(x) return x end", normalized)
+        self.assertIn("local x\n", normalized)
+        self.assertIn("local f = id", normalized)
+        self.assertNotIn("-> number", normalized)
+        self.assertNotIn("<T>(T)", normalized)
+
+    def test_type_cast_operator(self):
+        from engine.syntax_normalizer import normalize_luau_syntax
+
+        code = (
+            "local x = something :: number\n"
+            "local y = (val :: any):Method()\n"
+            "return result :: boolean\n"
+        )
+        normalized = normalize_luau_syntax(code)
+        self.assertIn("local x = something\n", normalized)
+        self.assertIn("local y = (val):Method()\n", normalized)
+        self.assertIn("return result\n", normalized)
+        self.assertNotIn("::", normalized)
 
 
 class EngineConstantInlinerTests(unittest.TestCase):
