@@ -11,6 +11,10 @@ from typing import List, Dict, Optional, Tuple, Any, Union
 import re
 import ast
 
+_RE_DECIMAL_ESCAPE = re.compile(r"\\([0-9]{1,3})")
+_RE_HEX_ESCAPE = re.compile(r"\\x([0-9a-fA-F]{2})")
+_BASE64_POWERS = (262144, 4096, 64, 1)
+
 
 class StaticConstantDecoder:
     """
@@ -25,18 +29,17 @@ class StaticConstantDecoder:
         """
         Convert Lua byte escapes (\\ddd, \\xHH, \\n, etc.) to raw string/bytes.
         """
-        # Match \ddd decimal escapes
+        if "\\" not in escaped:
+            return escaped
+
         def replace_decimal(m):
-            num = int(m.group(1))
-            return chr(num)
+            return chr(int(m.group(1)))
 
-        # Match \xHH hex escapes
         def replace_hex(m):
-            num = int(m.group(1), 16)
-            return chr(num)
+            return chr(int(m.group(1), 16))
 
-        s = re.sub(r"\\([0-9]{1,3})", replace_decimal, escaped)
-        s = re.sub(r"\\x([0-9a-fA-F]{2})", replace_hex, s)
+        s = _RE_DECIMAL_ESCAPE.sub(replace_decimal, escaped)
+        s = _RE_HEX_ESCAPE.sub(replace_hex, s)
         s = s.replace(r"\n", "\n").replace(r"\r", "\r").replace(r"\t", "\t")
         s = s.replace(r"\\", "\\").replace(r'\"', '"').replace(r"\'", "'")
         return s
@@ -309,7 +312,7 @@ class StaticConstantDecoder:
             char = data[index]
             if char in lookup:
                 code = lookup[char]
-                value += code * (64 ** (3 - count))
+                value += code * _BASE64_POWERS[count]
                 count += 1
                 if count == 4:
                     count = 0

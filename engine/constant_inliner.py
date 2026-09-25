@@ -12,7 +12,8 @@ Directly analyzes Lua code to:
 
 from typing import List, Dict, Optional, Tuple, Any
 import re
-from .ast_optimizer import safe_eval_math_expr, split_lua_tokens
+from .ast_optimizer import safe_eval_math_expr
+from .lua_lexer import tokenize_lua_chunks as split_lua_tokens
 from .static_decoder import StaticConstantDecoder
 
 
@@ -24,6 +25,10 @@ WRAPPER_FUNC_PATTERN = re.compile(
 WRAPPER_ASSIGN_PATTERN = re.compile(
     r"(?:local\s+)?([a-zA-Z0-9_]+)\s*=\s*function\s*\(\s*([a-zA-Z0-9_]+)\s*\)\s*"
     r"return\s+([a-zA-Z0-9_]+)\s*\[\s*\2\s*([+\-])\s*([0-9a-fA-FxX]+|\d+)\s*\]\s*end"
+)
+
+_PROXIFIED_LOCAL_PATTERN = re.compile(
+    r"setmetatable\s*\(\s*\{\s*\[\s*[\"'][^\"']+[\"']\s*\]\s*=\s*([^,}]+?)\s*\}\s*,\s*\{[^}]+\}\s*\)"
 )
 
 
@@ -68,6 +73,10 @@ class ConstantInliner:
         """
         Replace all wrapper(index_expr) calls with their concrete decoded constant literals.
         """
+        wrapper_info = self.detect_wrapper(code)
+        if not wrapper_info:
+            return code
+
         const_list = constants if constants is not None else self.constants
         if not const_list:
             # Try to statically decode constants from code if not provided
@@ -75,10 +84,6 @@ class ConstantInliner:
             const_list = decoder.decode_all(code)
 
         if not const_list:
-            return code
-
-        wrapper_info = self.detect_wrapper(code)
-        if not wrapper_info:
             return code
 
         func_name = wrapper_info["func_name"]
@@ -92,8 +97,25 @@ class ConstantInliner:
             rf"\b{re.escape(func_name)}\s*\(\s*(-?(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?|\([^)]+\)))\s*\)"
         )
 
+        escaped_cache: Dict[int, str] = {}
+
+        def get_escaped(arr_idx: int) -> str:
+            if arr_idx in escaped_cache:
+                return escaped_cache[arr_idx]
+            c_val = const_list[arr_idx - 1]
+            if isinstance(c_val, (bytes, bytearray, str)):
+                res = StaticConstantDecoder.escape_for_lua(c_val)
+            elif isinstance(c_val, bool):
+                res = "true" if c_val else "false"
+            elif c_val is None:
+                res = "nil"
+            else:
+                res = str(c_val)
+            escaped_cache[arr_idx] = res
+            return res
+
         for token_type, content in tokens:
-            if token_type == "CODE":
+            if token_type == "CODE" and func_name in content:
 
                 def replace_call(cm):
                     raw_arg = cm.group(1).strip()
@@ -108,17 +130,7 @@ class ConstantInliner:
                     arr_idx = (val + offset) if sign == "+" else (val - offset)
                     # Lua tables are 1-indexed
                     if 1 <= arr_idx <= len(const_list):
-                        c_val = const_list[arr_idx - 1]
-                        if isinstance(c_val, (bytes, bytearray)):
-                            return StaticConstantDecoder.escape_for_lua(c_val)
-                        elif isinstance(c_val, str):
-                            return StaticConstantDecoder.escape_for_lua(c_val)
-                        elif isinstance(c_val, bool):
-                            return "true" if c_val else "false"
-                        elif c_val is None:
-                            return "nil"
-                        else:
-                            return str(c_val)
+                        return get_escaped(arr_idx)
 
                     return cm.group(0)
 
@@ -133,10 +145,9 @@ class ConstantInliner:
         Unwrap Prometheus ProxifyLocals.lua local metatable assignments:
             local x = setmetatable({ [secret] = init }, mt) -> local x = init
         """
-        pattern = re.compile(
-            r"setmetatable\s*\(\s*\{\s*\[\s*[\"'][^\"']+[\"']\s*\]\s*=\s*([^,}]+?)\s*\}\s*,\s*\{[^}]+\}\s*\)"
-        )
-        return pattern.sub(lambda m: m.group(1).strip(), code)
+        if "setmetatable" not in code:
+            return code
+        return _PROXIFIED_LOCAL_PATTERN.sub(lambda m: m.group(1).strip(), code)
 
 
 def inline_constants_in_code(
