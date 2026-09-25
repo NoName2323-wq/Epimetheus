@@ -1,11 +1,36 @@
 import os
 import sys
 import re
+import functools
 from collections import OrderedDict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engine.trace_filter import TraceFilter, filter_trace_stream
 from engine.ast_optimizer import AstOptimizer, optimize_lua_code
+
+CONSTRUCTOR_PREFIXES = (
+    "UDim2.new", "UDim.new", "Color3.fromRGB", "Color3.new",
+    "Vector3.new", "Vector2.new", "CFrame.new",
+    "BrickColor.new", "NumberRange.new", "NumberSequence.new",
+    "ColorSequence.new",
+)
+
+_RE_FUNCTION_ADDR = re.compile(r'function:\s*(?:0x)?[0-9a-fA-F]+')
+_RE_LOCAL_BINDING = re.compile(r'^local\s+(\S+)\s*=\s*(.+)$')
+_RE_CALL_PARTS = re.compile(r'^([a-zA-Z0-9_.]+)\((.*)\)$', re.DOTALL)
+_RE_SET_GLOBAL = re.compile(r'^(\S+)\s*=\s*(.+)$')
+_RE_NORMALIZED_VAR = re.compile(r'\b[a-zA-Z0-9_]+_v(\d+)\b')
+_RE_PATTERN_HEX = re.compile(r'_\d{3,}')
+_RE_PATTERN_SERVICE = re.compile(r'Service_\w+')
+_RE_TRAILING_HEX = re.compile(r'_\d{3,}$')
+
+
+@functools.lru_cache(maxsize=1024)
+def _get_var_map_pattern(keys_tuple: tuple) -> Optional[re.Pattern]:
+    if not keys_tuple:
+        return None
+    return re.compile(r'\b(' + '|'.join(re.escape(k) for k in keys_tuple) + r')\b')
+
 
 
 def clean_dummy_name(name):
@@ -21,14 +46,14 @@ def make_colon_call(obj_chain, method, args_str):
 
 
 def simplify_call_result(line):
-    m = re.match(r'^local\s+(\S+)\s*=\s*(.+)$', line)
+    m = _RE_LOCAL_BINDING.match(line)
     if not m:
         return line, None, False
 
     var_name = m.group(1)
     rhs = m.group(2).strip()
 
-    call_match = re.match(r'^([a-zA-Z0-9_.]+)\((.*)\)$', rhs, re.DOTALL)
+    call_match = _RE_CALL_PARTS.match(rhs)
     if not call_match:
         return line, var_name, True
 
@@ -55,14 +80,16 @@ def simplify_call_result(line):
         method = parts[-1]
         obj = simplify_obj_name(obj)
         args_str = ", ".join(a.strip() for a in clean_args)
-        args_str = re.sub(r'function:\s*(?:0x)?[0-9a-fA-F]+', 'function(...) end', args_str)
+        if "function:" in args_str:
+            args_str = _RE_FUNCTION_ADDR.sub('function(...) end', args_str)
         call_expr = f"{obj}:{method}({args_str})"
         nice_var = generate_var_name(obj, method, clean_args)
         return call_expr, nice_var, True
     else:
         func_name = simplify_obj_name(func_chain)
         args_str = ", ".join(a.strip() for a in args_list)
-        args_str = re.sub(r'function:\s*(?:0x)?[0-9a-fA-F]+', 'function(...) end', args_str)
+        if "function:" in args_str:
+            args_str = _RE_FUNCTION_ADDR.sub('function(...) end', args_str)
         call_expr = f"{func_name}({args_str})"
         nice_var = generate_var_name_from_func(func_name, args_list)
         return call_expr, nice_var, True
@@ -71,14 +98,14 @@ def simplify_call_result(line):
 def smart_split_args(args_str):
     result = []
     depth = 0
-    current = ""
+    current = []
     in_string = False
     string_char = None
     escaped = False
 
     for ch in args_str:
         if in_string:
-            current += ch
+            current.append(ch)
             if escaped:
                 escaped = False
             elif ch == "\\":
@@ -91,28 +118,28 @@ def smart_split_args(args_str):
             in_string = True
             string_char = ch
             escaped = False
-            current += ch
+            current.append(ch)
         elif ch in ('(', '[', '{'):
             depth += 1
-            current += ch
+            current.append(ch)
         elif ch in (')', ']', '}'):
             depth = max(0, depth - 1)
-            current += ch
+            current.append(ch)
         elif ch == ',' and depth == 0:
-            result.append(current)
-            current = ""
+            result.append("".join(current))
+            current = []
         else:
-            current += ch
+            current.append(ch)
 
-    if current.strip():
-        result.append(current)
+    tail = "".join(current)
+    if tail.strip():
+        result.append(tail)
 
     return result
 
 
 def simplify_obj_name(name):
-    name = re.sub(r'_\d{3,}$', '', name)
-    return name
+    return _RE_TRAILING_HEX.sub('', name)
 
 
 def generate_var_name(obj, method, args):
@@ -174,77 +201,43 @@ def generate_var_name_from_func(func_name, args):
 
 
 def detect_loops(lines):
-    if len(lines) < 6:
+    n = len(lines)
+    if n < 6:
         return None
 
-    for pattern_len in range(2, min(20, len(lines) // 2 + 1)):
-        pattern = []
-        for i in range(pattern_len):
-            pattern.append(normalize_for_pattern(lines[i]))
+    normalized = [normalize_for_pattern(l) for l in lines]
+
+    for pattern_len in range(2, min(20, n // 2 + 1)):
+        pattern_tuple = tuple(normalized[:pattern_len])
+        pattern_hash = hash(pattern_tuple)
 
         count = 1
         pos = pattern_len
-        while pos + pattern_len <= len(lines):
-            matches = True
-            for j in range(pattern_len):
-                if normalize_for_pattern(lines[pos + j]) != pattern[j]:
-                    matches = False
-                    break
-            if matches:
+        while pos + pattern_len <= n:
+            block = tuple(normalized[pos : pos + pattern_len])
+            if hash(block) == pattern_hash and block == pattern_tuple:
                 count += 1
                 pos += pattern_len
             else:
                 break
 
-        if count >= 3 and count * pattern_len >= len(lines) * 0.8:
+        if count >= 3 and count * pattern_len >= n * 0.8:
             return pattern_len, count, lines[:pattern_len]
 
     return None
 
 
 def normalize_for_pattern(line):
-    line = re.sub(r'_\d{3,}', '_XXX', line)
-    line = re.sub(r'Service_\w+', 'Service_XXX', line)
-    return line
+    line = _RE_PATTERN_HEX.sub('_XXX', line)
+    return _RE_PATTERN_SERVICE.sub('Service_XXX', line)
 
 
-def parse_trace(report_file):
-    with open(report_file, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-
-    constants_str = ""
-    trace_lines = []
-    in_constants = False
-    in_trace = False
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        if line == "--- CONSTANTS START ---" or line == "--- CONSTANTS ---":
-            in_constants = True
-            continue
-        if line == "--- CONSTANTS END ---":
-            in_constants = False
-            continue
-        if line == "--- TRACE ---":
-            in_trace = True
-            continue
-        if line == "--- TRACE END ---":
-            in_trace = False
-            continue
-
-        if in_constants:
-            constants_str += line + "\n"
-        elif any(line.startswith(prefix) for prefix in [
-            "CALL_RESULT -->", "SET GLOBAL -->", "TRACE_PRINT -->",
-            "URL DETECTED -->", "URL DETECTED IN CONCAT -->", "--- ENTERING CLOSURE", "--- EXITING CLOSURE",
-            "ACCESSED -->", "LOADSTRING DETECTED", "LOADSTRING CONTENT",
-            "PROP_SET -->"
-        ]):
-            trace_lines.append(line)
-
+def parse_trace_lines(
+    trace_lines,
+    constants_str="",
+    out_file_path=None,
+    const_file_path=None,
+):
     operations = []
     closure_stack = []
 
@@ -318,9 +311,12 @@ def parse_trace(report_file):
 
     output_lines = ["-- Deobfuscated via Trace Emulation", ""]
 
-    if constants_str.strip():
-        const_file = report_file.replace(".report.txt", ".constants.lua")
-        if constants_str.count("\n") > 50:
+    if constants_str and constants_str.strip():
+        const_file = const_file_path
+        if not const_file and out_file_path:
+            const_file = out_file_path.replace(".deobf.lua", ".constants.lua")
+
+        if const_file and constants_str.count("\n") > 50:
             with open(const_file, 'w', encoding='utf-8') as f:
                 f.write(constants_str.strip() + "\n")
             output_lines.append(f"-- String constants ({constants_str.count(chr(10))} entries) saved to: {os.path.basename(const_file)}")
@@ -335,15 +331,58 @@ def parse_trace(report_file):
     final_output = "\n".join(output_lines)
     final_output = postprocess_output(final_output)
 
-    out_file = report_file.replace(".report.txt", ".deobf.lua")
-    with open(out_file, 'w', encoding='utf-8') as f:
-        f.write(final_output)
+    if out_file_path:
+        with open(out_file_path, 'w', encoding='utf-8') as f:
+            f.write(final_output)
+        print(f"Saved {out_file_path}")
 
-    print(f"Saved {out_file}")
+    return final_output
+
+
+def parse_trace(report_file):
+    with open(report_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    constants_str = ""
+    trace_lines = []
+    in_constants = False
+    in_trace = False
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        if line == "--- CONSTANTS START ---" or line == "--- CONSTANTS ---":
+            in_constants = True
+            continue
+        if line == "--- CONSTANTS END ---":
+            in_constants = False
+            continue
+        if line == "--- TRACE ---":
+            in_trace = True
+            continue
+        if line == "--- TRACE END ---":
+            in_trace = False
+            continue
+
+        if in_constants:
+            constants_str += line + "\n"
+        elif any(line.startswith(prefix) for prefix in [
+            "CALL_RESULT -->", "SET GLOBAL -->", "TRACE_PRINT -->",
+            "URL DETECTED -->", "URL DETECTED IN CONCAT -->", "--- ENTERING CLOSURE", "--- EXITING CLOSURE",
+            "ACCESSED -->", "LOADSTRING DETECTED", "LOADSTRING CONTENT",
+            "PROP_SET -->"
+        ]):
+            trace_lines.append(line)
+
+    out_file = report_file.replace(".report.txt", ".deobf.lua")
+    const_file = report_file.replace(".report.txt", ".constants.lua")
+    return parse_trace_lines(trace_lines, constants_str, out_file_path=out_file, const_file_path=const_file)
 
 
 def process_call_line(raw, var_map, var_counter, used_vars):
-    m = re.match(r'^local\s+(\S+)\s*=\s*(.+)$', raw)
+    m = _RE_LOCAL_BINDING.match(raw)
     if not m:
         return raw
 
@@ -352,7 +391,7 @@ def process_call_line(raw, var_map, var_counter, used_vars):
 
     resolved_rhs = resolve_vars(rhs, var_map)
 
-    call_match = re.match(r'^([a-zA-Z0-9_.]+)\((.*)\)$', resolved_rhs, re.DOTALL)
+    call_match = _RE_CALL_PARTS.match(resolved_rhs)
     if not call_match:
         clean_name = get_clean_var(orig_var, var_counter, used_vars)
         var_map[orig_var] = clean_name
@@ -381,7 +420,8 @@ def process_call_line(raw, var_map, var_counter, used_vars):
     clean_arg_strs = []
     for a in clean_args:
         a = a.strip()
-        a = re.sub(r'function:\s*(?:0x)?[0-9a-fA-F]+', 'function(...) end', a)
+        if "function:" in a:
+            a = _RE_FUNCTION_ADDR.sub('function(...) end', a)
         clean_arg_strs.append(a)
     args_str = ", ".join(clean_arg_strs)
 
@@ -431,13 +471,13 @@ def process_call_line(raw, var_map, var_counter, used_vars):
 
 def resolve_vars(text, var_map):
     if var_map:
-        valid_keys = [re.escape(k) for k in sorted(var_map.keys(), key=len, reverse=True) if k and var_map[k]]
-        if valid_keys:
-            pattern = re.compile(r'\b(' + '|'.join(valid_keys) + r')\b')
-            text = pattern.sub(lambda m: var_map[m.group(1)], text)
+        keys = tuple(sorted((k for k in var_map.keys() if k and var_map[k]), key=len, reverse=True))
+        if keys:
+            pattern = _get_var_map_pattern(keys)
+            if pattern:
+                text = pattern.sub(lambda m: var_map[m.group(1)], text)
 
-    text = re.sub(r'\b[a-zA-Z0-9_]+_v(\d+)\b', r'v\1', text)
-    return text
+    return _RE_NORMALIZED_VAR.sub(r'v\1', text)
 
 
 def get_clean_var(orig_var, var_counter, used_vars):
@@ -463,7 +503,7 @@ def get_clean_var(orig_var, var_counter, used_vars):
 
 
 def process_set_global(raw, var_map):
-    m = re.match(r'^(\S+)\s*=\s*(.+)$', raw)
+    m = _RE_SET_GLOBAL.match(raw)
     if not m:
         return raw
 
@@ -494,12 +534,6 @@ def render_trace_operations(operations, var_map, var_counter, used_vars):
             clean_line = process_call_line(op["raw"], var_map, var_counter, used_vars)
             if clean_line:
                 skip = False
-                CONSTRUCTOR_PREFIXES = (
-                    "UDim2.new", "UDim.new", "Color3.fromRGB", "Color3.new",
-                    "Vector3.new", "Vector2.new", "CFrame.new",
-                    "BrickColor.new", "NumberRange.new", "NumberSequence.new",
-                    "ColorSequence.new",
-                )
                 if any(clean_line.startswith(p) for p in CONSTRUCTOR_PREFIXES) and not clean_line.startswith("local "):
                     skip = True
                 elif any(clean_line.startswith(p) for p in CONSTRUCTOR_PREFIXES):
@@ -576,7 +610,8 @@ def postprocess_output(output):
         if stripped == "" and prev_line.strip() == "":
             continue
 
-        line = re.sub(r'function:\s*(?:0x)?[0-9a-fA-F]+', 'function(...) end', line)
+        if "function:" in line:
+            line = _RE_FUNCTION_ADDR.sub('function(...) end', line)
 
         cleaned.append(line)
         prev_line = line

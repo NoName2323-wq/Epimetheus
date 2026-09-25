@@ -35,6 +35,9 @@ DEFAULT_DROPPED_PREFIXES = (
 )
 
 
+_RE_CONST_ENTRY = re.compile(r"^\[\d+\]\s*=")
+
+
 class TraceFilter:
     """
     Intelligent streaming and batch filter for runtime execution traces.
@@ -46,11 +49,13 @@ class TraceFilter:
         dropped_prefixes: Optional[Sequence[str]] = None,
         max_consecutive_duplicates: int = 5,
         compress_duplicates: bool = True,
+        track_stats: bool = False,
     ):
         self.preserved_prefixes = tuple(preserved_prefixes or DEFAULT_PRESERVED_PREFIXES)
         self.dropped_prefixes = tuple(dropped_prefixes or DEFAULT_DROPPED_PREFIXES)
         self.max_consecutive_duplicates = max_consecutive_duplicates
         self.compress_duplicates = compress_duplicates
+        self.track_stats = track_stats
 
         # Statistics
         self.lines_processed = 0
@@ -68,11 +73,11 @@ class TraceFilter:
         self.bytes_in = 0
         self.bytes_out = 0
 
-    def is_relevant(self, line: str) -> bool:
+    def is_relevant(self, line: str, clean: Optional[str] = None) -> bool:
         """
         Determine whether a raw trace line contains meaningful semantic operations.
         """
-        line_clean = line.strip()
+        line_clean = clean if clean is not None else line.strip()
         if not line_clean:
             return False
 
@@ -85,7 +90,7 @@ class TraceFilter:
                 return True
 
         # In constants table (e.g. '[1] = "foo"')
-        if re.match(r"^\[\d+\]\s*=", line_clean) or line_clean.startswith("}"):
+        if _RE_CONST_ENTRY.match(line_clean) or line_clean.startswith("}"):
             return True
 
         return False
@@ -97,12 +102,14 @@ class TraceFilter:
         last_line: Optional[str] = None
         consecutive_count = 0
         in_constants = False
+        track = self.track_stats
 
         for raw_line in lines:
             line = raw_line.rstrip("\r\n")
-            line_bytes = len(line.encode("utf-8", errors="replace")) + 1
-            self.bytes_in += line_bytes
             self.lines_processed += 1
+            if track:
+                line_bytes = len(line.encode("utf-8", errors="replace")) + 1
+                self.bytes_in += line_bytes
 
             stripped = line.strip()
 
@@ -113,11 +120,12 @@ class TraceFilter:
 
             if in_constants:
                 self.lines_preserved += 1
-                self.bytes_out += line_bytes
+                if track:
+                    self.bytes_out += line_bytes
                 yield line
                 continue
 
-            if not self.is_relevant(line):
+            if not self.is_relevant(line, clean=stripped):
                 self.lines_dropped += 1
                 continue
 
@@ -133,7 +141,8 @@ class TraceFilter:
                 last_line = stripped
 
             self.lines_preserved += 1
-            self.bytes_out += line_bytes
+            if track:
+                self.bytes_out += line_bytes
             yield line
 
     def filter_lines(self, lines: Sequence[str]) -> list[str]:
