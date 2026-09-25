@@ -15,6 +15,10 @@ from typing import List, Tuple, Optional, Dict, Union
 import ast
 import re
 import uuid
+import functools
+from .lua_lexer import tokenize_lua_chunks, join_lua_tokens
+
+split_lua_tokens = tokenize_lua_chunks
 
 
 HEX_INT_PATTERN = re.compile(r"^0[xX][0-9a-fA-F]+$")
@@ -31,6 +35,12 @@ PAREN_LITERAL_PATTERN = re.compile(
     r"\(\s*(-?(?:0[xX][0-9a-fA-F]+|0[bB][01]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?))\s*\)"
 )
 DOUBLE_NEG_PATTERN = re.compile(r"-\s*\(\s*-\s*([0-9a-zA-Z_]+)\s*\)")
+_RE_IDENT = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
+
+
+@functools.lru_cache(maxsize=8192)
+def _get_alias_sub_pattern(var_name: str) -> re.Pattern:
+    return re.compile(rf"(?<![.:])\b{re.escape(var_name)}\b")
 
 
 def parse_lua_string_token(token_type: str, lit: str) -> Optional[str]:
@@ -204,6 +214,12 @@ def strip_prometheus_watermarks(
     return pattern.sub("-- [Epimetheus: Stripped Prometheus watermark check]", code)
 
 
+_SIMPLE_BINARY_EXPR = re.compile(
+    r"^\s*(-?(?:0[xX][0-9a-fA-F]+|0[bB][01]+|\d+(?:\.\d+)?))\s*([+\-*%^])\s*(-?(?:0[xX][0-9a-fA-F]+|0[bB][01]+|\d+(?:\.\d+)?))\s*$"
+)
+
+
+@functools.lru_cache(maxsize=4096)
 def safe_eval_math_expr(expr_str: str) -> Optional[Union[int, float]]:
     """
     Safely evaluate a mathematical expression containing only numbers and basic operators.
@@ -211,6 +227,36 @@ def safe_eval_math_expr(expr_str: str) -> Optional[Union[int, float]]:
     Returns None if expression is invalid or dangerous.
     """
     clean = expr_str.strip()
+
+    m_simple = _SIMPLE_BINARY_EXPR.match(clean)
+    if m_simple:
+        l_str, op, r_str = m_simple.groups()
+        try:
+            l = int(l_str, 0) if not ("." in l_str) else float(l_str)
+            r = int(r_str, 0) if not ("." in r_str) else float(r_str)
+            res = None
+            if op == "+":
+                res = l + r
+            elif op == "-":
+                res = l - r
+            elif op == "*":
+                res = l * r
+            elif op == "/":
+                if r != 0:
+                    res = l / r
+            elif op == "%":
+                if r != 0:
+                    res = l % r
+            elif op == "^":
+                if 0 <= r <= 64 and abs(l) <= 1e9:
+                    res = l ** r
+
+            if res is not None:
+                if isinstance(res, float) and res.is_integer() and abs(res) < 1e15:
+                    return int(res)
+                return res
+        except Exception:
+            pass
 
     # Replace 0x... and 0b... with decimal for Python eval
     def replace_hex(m):
@@ -275,100 +321,6 @@ def safe_eval_math_expr(expr_str: str) -> Optional[Union[int, float]]:
     return None
 
 
-def split_lua_tokens(source: str) -> List[Tuple[str, str]]:
-    """
-    Split Lua source into (token_type, token_content) pairs.
-    Token types:
-      - 'COMMENT_LONG'
-      - 'COMMENT_SHORT'
-      - 'STRING_LONG'
-      - 'STRING_SHORT'
-      - 'CODE'
-    """
-    tokens = []
-    idx = 0
-    length = len(source)
-    code_start = 0
-
-    while idx < length:
-        # Check comments (-- or --[(=*)\[)
-        if source.startswith("--", idx):
-            m_comm = re.match(r"^--\[(=*)\[", source[idx:])
-            if m_comm:
-                if idx > code_start:
-                    tokens.append(("CODE", source[code_start:idx]))
-                eq_count = len(m_comm.group(1))
-                close_delim = "]" + ("=" * eq_count) + "]"
-                content_start = idx + len(m_comm.group(0))
-                close_pos = source.find(close_delim, content_start)
-                if close_pos == -1:
-                    tokens.append(("COMMENT_LONG", source[idx:]))
-                    return tokens
-                end_idx = close_pos + len(close_delim)
-                tokens.append(("COMMENT_LONG", source[idx:end_idx]))
-                idx = end_idx
-                code_start = idx
-                continue
-            else:
-                if idx > code_start:
-                    tokens.append(("CODE", source[code_start:idx]))
-                end_nl = source.find("\n", idx + 2)
-                if end_nl == -1:
-                    tokens.append(("COMMENT_SHORT", source[idx:]))
-                    return tokens
-                tokens.append(("COMMENT_SHORT", source[idx:end_nl]))
-                idx = end_nl
-                code_start = idx
-                continue
-
-        # Check long strings [(=*)\[
-        if source.startswith("[", idx):
-            m_str = re.match(r"^\[(=*)\[", source[idx:])
-            if m_str:
-                if idx > code_start:
-                    tokens.append(("CODE", source[code_start:idx]))
-                eq_count = len(m_str.group(1))
-                close_delim = "]" + ("=" * eq_count) + "]"
-                content_start = idx + len(m_str.group(0))
-                close_pos = source.find(close_delim, content_start)
-                if close_pos == -1:
-                    tokens.append(("STRING_LONG", source[idx:]))
-                    return tokens
-                end_idx = close_pos + len(close_delim)
-                tokens.append(("STRING_LONG", source[idx:end_idx]))
-                idx = end_idx
-                code_start = idx
-                continue
-
-        char = source[idx]
-        # Check string literal '...' or "..."
-        if char in ('"', "'"):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            quote = char
-            str_start = idx
-            idx += 1
-            while idx < length:
-                ch = source[idx]
-                if ch == "\\":
-                    idx += 2
-                    continue
-                if ch == quote:
-                    idx += 1
-                    break
-                idx += 1
-            tokens.append(("STRING_SHORT", source[str_start:idx]))
-            code_start = idx
-            continue
-
-        idx += 1
-
-    if code_start < length:
-        tokens.append(("CODE", source[code_start:]))
-
-    return tokens
-
-
 class AstOptimizer:
     """
     Lua source code post-processing optimizer.
@@ -396,26 +348,19 @@ class AstOptimizer:
         result = code_chunk
 
         # Pass 1: Parenthesized expressions
+        def repl_math(m):
+            nonlocal modified
+            expr_text = m.group(0)
+            inner = expr_text.strip("()")
+            evaluated = safe_eval_math_expr(inner)
+            if evaluated is not None:
+                modified = True
+                return str(evaluated)
+            return expr_text
+
         for _ in range(8):
             modified = False
-            matches = list(MATH_EXPR_PATTERN.finditer(result))
-            if not matches:
-                break
-
-            offset = 0
-            for m in matches:
-                expr_text = m.group(0)
-                # Strip outer parens
-                inner = expr_text.strip("()")
-                evaluated = safe_eval_math_expr(inner)
-                if evaluated is not None:
-                    repl = str(evaluated)
-                    start = m.start() + offset
-                    end = m.end() + offset
-                    result = result[:start] + repl + result[end:]
-                    offset += len(repl) - len(expr_text)
-                    modified = True
-
+            result = MATH_EXPR_PATTERN.sub(repl_math, result)
             if not modified:
                 break
 
@@ -423,23 +368,19 @@ class AstOptimizer:
         result = DOUBLE_NEG_PATTERN.sub(r"\1", result)
 
         # Pass 3: Parenthesized simple literals: (123) -> 123, (0x10) -> 16
+        def repl_lit(m):
+            nonlocal modified
+            expr_text = m.group(0)
+            inner = expr_text.strip("()")
+            evaluated = safe_eval_math_expr(inner)
+            if evaluated is not None:
+                modified = True
+                return str(evaluated)
+            return expr_text
+
         for _ in range(3):
             modified = False
-            matches = list(PAREN_LITERAL_PATTERN.finditer(result))
-            if not matches:
-                break
-            offset = 0
-            for m in matches:
-                expr_text = m.group(0)
-                inner = expr_text.strip("()")
-                evaluated = safe_eval_math_expr(inner)
-                if evaluated is not None:
-                    repl = str(evaluated)
-                    start = m.start() + offset
-                    end = m.end() + offset
-                    result = result[:start] + repl + result[end:]
-                    offset += len(repl) - len(expr_text)
-                    modified = True
+            result = PAREN_LITERAL_PATTERN.sub(repl_lit, result)
             if not modified:
                 break
 
@@ -502,7 +443,11 @@ class AstOptimizer:
                     break
             return curr
 
-        def get_active_aliases() -> Dict[str, str]:
+        active_aliases: Dict[str, str] = {}
+        aliases_dirty = True
+
+        def rebuild_active_aliases() -> None:
+            nonlocal active_aliases, aliases_dirty
             active: Dict[str, str] = {}
             for i, s in enumerate(scope_stack):
                 for dst, src in s["aliases"].items():
@@ -513,7 +458,8 @@ class AstOptimizer:
                             break
                     if not shadowed:
                         active[dst] = src
-            return active
+            active_aliases = active
+            aliases_dirty = False
 
         for line in lines:
             stripped = line.strip()
@@ -530,6 +476,7 @@ class AstOptimizer:
                 for _ in range(closing_count):
                     if len(scope_stack) > 1:
                         scope_stack.pop()
+                        aliases_dirty = True
 
             # Check if line defines an alias
             m = copy_pattern.match(stripped)
@@ -547,6 +494,7 @@ class AstOptimizer:
                     ):
                         scope_stack[-1]["aliases"][var_dst] = root_src
                         scope_stack[-1]["locals"].add(var_dst)
+                        aliases_dirty = True
                         # Drop the redundant alias definition line
                         continue
 
@@ -556,22 +504,29 @@ class AstOptimizer:
                     v_clean = v.split(":")[0].strip().split("=")[0].strip()
                     if v_clean:
                         scope_stack[-1]["locals"].add(v_clean)
+                        aliases_dirty = True
 
             # Apply active aliases to line
-            active_aliases = get_active_aliases()
+            if aliases_dirty:
+                rebuild_active_aliases()
+
             transformed_line = line
-            for dst, src in active_aliases.items():
-                if dst in transformed_line:
-                    # Word boundary replacement that EXCLUDES object fields (e.g. obj.alias or obj:alias)
-                    transformed_line = re.sub(rf"(?<![.:])\b{re.escape(dst)}\b", src, transformed_line)
+            if active_aliases:
+                words = set(_RE_IDENT.findall(line))
+                matching = words.intersection(active_aliases.keys())
+                if matching:
+                    for var in sorted(matching, key=len, reverse=True):
+                        transformed_line = _get_alias_sub_pattern(var).sub(active_aliases[var], transformed_line)
 
             cleaned_lines.append(transformed_line)
 
             if fn_match:
                 params = {p.strip().split(":")[0].strip() for p in fn_match.group(1).split(",") if p.strip()}
                 scope_stack.append({"aliases": {}, "locals": params})
+                aliases_dirty = True
             elif do_match and not stripped.startswith("end"):
                 scope_stack.append({"aliases": {}, "locals": set()})
+                aliases_dirty = True
 
         return cleaned_lines
 
@@ -648,9 +603,17 @@ class AstOptimizer:
 
         unmasked = "\n".join(final_lines) + "\n"
 
-        # Restore strings and comments
-        for placeholder, original in sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True):
-            unmasked = unmasked.replace(placeholder, original)
+        # Restore strings and comments in a single pass
+        sample_key = next(iter(mapping.keys()), None)
+        if sample_key:
+            m_pref = re.search(r"(__EPI_[0-9a-fA-F]+_)", sample_key)
+            if m_pref:
+                p_esc = re.escape(m_pref.group(1))
+                pattern = re.compile(rf"--\[\[{p_esc}CMTL_\d+__\]\]|--{p_esc}CMT_\d+__|{p_esc}STR_\d+__")
+                unmasked = pattern.sub(lambda m: mapping.get(m.group(0), m.group(0)), unmasked)
+            else:
+                for placeholder, original in sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True):
+                    unmasked = unmasked.replace(placeholder, original)
 
         return unmasked
 
