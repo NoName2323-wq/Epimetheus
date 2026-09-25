@@ -867,6 +867,7 @@ safe_globals["_G"] = MockEnv
 safe_globals["shared"] = MockEnv
 _G.print = safe_globals["print"]
 _G.warn = safe_globals["print"]
+setmetatable(_G, { __index = MockEnv })
 """
 
     idx_args = content.rfind("(getfenv")
