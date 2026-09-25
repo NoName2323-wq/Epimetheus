@@ -77,6 +77,31 @@ class EngineAstOptimizerTests(unittest.TestCase):
         self.assertIn('player_service:Connect()', optimized)
 
 
+    def test_string_concatenation_folding(self):
+        code = 'local s = "Hello, " .. "world" .. "!"\nlocal s2 = "foo" .. "bar"\n'
+        optimized = optimize_lua_code(code)
+        self.assertIn('local s = "Hello, world!"', optimized)
+        self.assertIn('local s2 = "foobar"', optimized)
+
+    def test_table_concat_folding(self):
+        code = 'local res = table.concat({"partA", "partB", "partC"}, "_")\n'
+        optimized = optimize_lua_code(code)
+        self.assertIn('local res = "partA_partB_partC"', optimized)
+
+    def test_scientific_and_power_math_folding(self):
+        code = "local x = (1e2 + 50)\nlocal y = (2 ^ 4)\nlocal z = (10 % 3)\n"
+        optimized = optimize_lua_code(code)
+        self.assertIn("local x = 150", optimized)
+        self.assertIn("local y = 16", optimized)
+        self.assertIn("local z = 1", optimized)
+
+    def test_watermark_removal(self):
+        code = 'if _var ~= "This Script is Part of the Prometheus Obfuscator by levno-710" then return end\nlocal a = 1\n'
+        optimized = optimize_lua_code(code)
+        self.assertNotIn('then return end', optimized)
+        self.assertIn('local a = 1', optimized)
+
+
 class EngineStaticDecoderTests(unittest.TestCase):
     def test_unescape_and_escape_roundtrip(self):
         raw = r"\072\101\108\108\111"  # :ello -> 72='H', 101='e', 108='l', 108='l', 111='o'
@@ -114,17 +139,69 @@ class EngineStaticDecoderTests(unittest.TestCase):
 
     def test_unrotate_array(self):
         decoder = StaticConstantDecoder()
-        # In Prometheus:
-        # reverse(1, n); reverse(1, d); reverse(d+1, n)
-        # unrotate_array reverses it back
         orig = [1, 2, 3, 4, 5]
-        # Simulate rotate with shift 2:
-        # reverse(0, 4) -> [5, 4, 3, 2, 1]
-        # reverse(0, 1) -> [4, 5, 3, 2, 1]
-        # reverse(2, 4) -> [4, 5, 1, 2, 3]
         rotated = [4, 5, 1, 2, 3]
         unrotated = decoder.unrotate_array(rotated, shift=2, length=5)
         self.assertEqual(unrotated, orig)
+
+    def test_detect_rotate_with_math_and_hex(self):
+        decoder = StaticConstantDecoder()
+        snippet = "for i, v in ipairs({{1, 0x100}, {1, (0x10 + 4)}, {20 + 1, 0x100}}) do"
+        rotate_info = decoder.detect_rotate(snippet)
+        self.assertIsNotNone(rotate_info)
+        shift, length = rotate_info
+        self.assertEqual(shift, 20)
+        self.assertEqual(length, 256)
+
+    def test_prometheus_stream_decryption(self):
+        decoder = StaticConstantDecoder()
+        # Test PRNG stream cipher round-trip with arbitrary keys
+        param_mul_45 = 125
+        param_add_45 = 654321
+        param_mul_8 = 45
+        secret_key_8 = 123
+        seed = 9876543210
+        expected = b"Epimetheus Prometheus Decryption Test"
+
+        # Encrypt with Prometheus cipher formula
+        state_45 = seed % 35184372088832
+        state_8 = seed % 255 + 2
+        prev_values = []
+
+        def get_rnd():
+            nonlocal state_45, state_8, prev_values
+            if not prev_values:
+                state_45 = (state_45 * param_mul_45 + param_add_45) % 35184372088832
+                while True:
+                    state_8 = (state_8 * param_mul_8) % 257
+                    if state_8 != 1:
+                        break
+                r = state_8 % 32
+                shift = 13 - (state_8 - r) // 32
+                n_base = (state_45 // (1 << shift)) % 4294967296 if shift >= 0 else (state_45 * (1 << (-shift))) % 4294967296
+                n = n_base / (1 << r)
+                rnd = int((n % 1.0) * 4294967296) + int(n)
+                low_16 = rnd % 65536
+                high_16 = (rnd - low_16) // 65536
+                prev_values = [low_16 % 256, (low_16 - low_16 % 256) // 256, high_16 % 256, (high_16 - high_16 % 256) // 256]
+            return prev_values.pop()
+
+        encrypted = bytearray()
+        prev = secret_key_8
+        for b in expected:
+            rnd = get_rnd()
+            encrypted.append((b - (rnd + prev)) % 256)
+            prev = b
+
+        decrypted = decoder.decrypt_prometheus_stream(
+            bytes(encrypted),
+            seed=seed,
+            param_mul_45=param_mul_45,
+            param_add_45=param_add_45,
+            param_mul_8=param_mul_8,
+            secret_key_8=secret_key_8,
+        )
+        self.assertEqual(decrypted, expected)
 
 
 if __name__ == "__main__":

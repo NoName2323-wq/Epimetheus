@@ -7,7 +7,7 @@
 ![Lua](https://img.shields.io/badge/Lua-5.1-000080?style=for-the-badge&logo=lua&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Only-success?style=for-the-badge&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-yellow?style=for-the-badge)
-![Tests](https://img.shields.io/badge/Tests-19%20Passed-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/Tests-25%20Passed-brightgreen?style=for-the-badge)
 
 **Linux-exclusive next-generation trace emulation, static constant decoding, and AST-optimized deobfuscation engine for Prometheus-protected Roblox Luau scripts.**
 
@@ -30,7 +30,7 @@
 
 * **Name:** **Epimetheus** (formerly *Prometheus-WeAre-Devs-Dumper*).
 * **Original Project Base:** Originates from [hutaoshusband/Prometheus-WeAre-Devs-Dumper](https://github.com/hutaoshusband/Prometheus-WeAre-Devs-Dumper). The initial project was developed as a basic Windows-only utility.
-* **Obfuscation Target:** Analyzed and reverse-engineered against the official [Prometheus Obfuscator by wcrddn / levno-710](https://github.com/wcrddn/Prometheus/tree/master).
+* **Obfuscation Target:** Analyzed and reverse-engineered against the official [Prometheus Obfuscator by levno-710 (v0.2.11.1)](https://github.com/prometheus-lua/Prometheus).
 * **Evolution to Epimetheus:** The codebase was rebuilt from the ground up as a high-performance, Linux-only engine, introducing modular AST optimization, streaming VM noise filtration, and pure Python static table decoding.
 
 ---
@@ -53,16 +53,19 @@ The processing pipeline was split into dedicated, high-speed modules:
   - Deduplicates tight consecutive VM loops with configurable compression limits.
 
 * **[`engine/ast_optimizer.py`](engine/ast_optimizer.py) (AST & Token Lua Optimizer):**
-  - **Constant Arithmetic Folding:** Automatically computes and simplifies Prometheus arithmetic obfuscation like `(-80732 + 80796)` $\rightarrow$ `64`, `(0x497e0 + -301009)` $\rightarrow$ `15`, hexadecimal literals, and basic operators safely without risk of code execution or division-by-zero.
+  - **Constant Arithmetic Folding:** Automatically computes and simplifies Prometheus arithmetic obfuscation like `(-80732 + 80796)` $\rightarrow$ `64`, `(0x497e0 + -301009)` $\rightarrow$ `15`, scientific notation (`1e5`), power expressions (`2 ^ 8`), hexadecimal literals, and basic operators safely without risk of code execution or division-by-zero.
+  - **String Concatenation Folding:** Reverses Prometheus `SplitStrings.lua` by automatically merging split literal fragments (`"game:Get" .. "Service"` $\rightarrow$ `"game:GetService"`) and static `table.concat` calls into clean, continuous string literals.
+  - **Watermark Dead-Code Elimination:** Identifies and strips Prometheus `WatermarkCheck.lua` dead conditional guards.
   - **String & Comment Protection:** Multi-type lexical tokenizer guarantees that string literals (`"do not fold (-80732 + 80796)"`) and comments are never mutated.
   - **Copy Propagation & Dead Code Elimination:** Inlines redundant intermediate single-use local aliases (`local alias = service; alias:Method() -> service:Method()`) and deletes dead self-assignments (`var = var`).
   - **Whitespace Normalization:** Cleans excessive blank lines and structures output Lua code.
 
 * **[`engine/static_decoder.py`](engine/static_decoder.py) (Static Prometheus Constant Decoder):**
+  - **Pure PRNG Keystream Decryptor:** Implements the exact inverse stream cipher for Prometheus `EncryptStrings.lua`, recovering encrypted constants directly in Python without requiring VM execution.
   - Recovers string constants directly in Python without requiring VM execution.
   - Parses custom shuffled 64-character (Base64) and 85-character (Base85) substitution tables.
   - Supports Mixed encoding detection via `prefix_0` / `prefix_1` headers.
-  - Detects Prometheus array rotation (`Rotate` step: `{{1, LEN}, {1, SHIFT}, ...}`) and calculates the reverse circular shift to restore true index order.
+  - Detects Prometheus array rotation (`Rotate` step: `{{1, LEN}, {1, SHIFT}, ...}`) with support for mutated math/hex shift expressions, and calculates the reverse circular shift to restore true index order.
   - Serves as an instant static extractor and fallback when dynamic sandboxes encounter syntax or compilation limits.
 
 ### 3. Core Engine Revamp & Speedup
@@ -106,7 +109,7 @@ Real-world test on production Prometheus-obfuscated scripts:
 | **Complex Script (~2.5 MB) Report** | 10.59 MB (257,942 lines) | **775 KB** (13,158 lines) | **-92.8% file size** |
 | **Variable Resolution Speed** | ~1.61 s per chunk | **0.012 s** per chunk | **134x faster** |
 | **Workspace Footprint** | >26 MB | **5.9 MB** | **77% disk savings** |
-| **Unit Test Suite** | 9 tests (basic) | **19 tests** (100% passing) | **Full coverage** |
+| **Unit Test Suite** | 9 tests (basic) | **25 tests** (100% passing) | **Full coverage** |
 
 ---
 
