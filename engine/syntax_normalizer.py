@@ -534,17 +534,146 @@ def _strip_local_type_annotations(code: str) -> str:
     return "".join(result)
 
 
+def _consume_luau_type(code: str, start_idx: int) -> int:
+    """
+    Consumes a Luau type expression starting at start_idx (immediately after '::').
+    Properly handles:
+        - Function types: (number) -> string, (string, number) -> boolean, () -> ()
+        - Generic functions and types: <T>(T) -> T, Array<Map<string, number>>
+        - Table types: { [string]: number }, { x: number }
+        - Union & intersection: number | string, Foo & Bar
+        - Optional types: string?, ((number) -> string)?
+        - Parenthesized casts and method calls: (val :: any):Method()
+    """
+    length = len(code)
+    idx = start_idx
+    while idx < length and code[idx] in " \t":
+        idx += 1
+
+    if idx >= length or code[idx] in "\r\n;":
+        return idx
+
+    paren_depth = 0
+    brace_depth = 0
+    bracket_depth = 0
+    angle_depth = 0
+
+    while idx < length:
+        ch = code[idx]
+
+        # Check closing delimiters that may match an outer expression opened before '::'
+        if ch == ')':
+            if paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                break
+            paren_depth = max(0, paren_depth - 1)
+            idx += 1
+            continue
+        elif ch == '}':
+            if brace_depth == 0 and paren_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+                break
+            brace_depth = max(0, brace_depth - 1)
+            idx += 1
+            continue
+        elif ch == ']':
+            if bracket_depth == 0 and paren_depth == 0 and brace_depth == 0 and angle_depth == 0:
+                break
+            bracket_depth = max(0, bracket_depth - 1)
+            idx += 1
+            continue
+        elif ch == '>':
+            if angle_depth == 0 and paren_depth == 0 and brace_depth == 0 and bracket_depth == 0:
+                break
+            angle_depth = max(0, angle_depth - 1)
+            idx += 1
+            continue
+
+        # Opening delimiters
+        if ch == '(':
+            paren_depth += 1
+            idx += 1
+            continue
+        elif ch == '{':
+            brace_depth += 1
+            idx += 1
+            continue
+        elif ch == '[':
+            bracket_depth += 1
+            idx += 1
+            continue
+        elif ch == '<':
+            angle_depth += 1
+            idx += 1
+            continue
+
+        # If inside any nested structure, consume until closed
+        if paren_depth > 0 or brace_depth > 0 or bracket_depth > 0 or angle_depth > 0:
+            idx += 1
+            continue
+
+        # Top-level (depth 0): check for statement separators
+        if ch in (',', ';', '\n', '\r'):
+            break
+
+        # Check for Luau type continuation operators: '->', '|', '&', '?'
+        if code.startswith('->', idx):
+            idx += 2
+            while idx < length and code[idx] in " \t":
+                idx += 1
+            continue
+
+        if ch in ('|', '&'):
+            idx += 1
+            while idx < length and code[idx] in " \t":
+                idx += 1
+            continue
+
+        if ch == '?':
+            idx += 1
+            continue
+
+        # Identifier chars or dot (e.g. module.Type)
+        if ch.isalnum() or ch in ('_', '.'):
+            idx += 1
+            continue
+
+        # Whitespace: check if followed by a type continuation operator
+        if ch in " \t":
+            look = idx
+            while look < length and code[look] in " \t":
+                look += 1
+            if look < length:
+                if code.startswith('->', look):
+                    idx = look + 2
+                    while idx < length and code[idx] in " \t":
+                        idx += 1
+                    continue
+                elif code[look] in ('|', '&'):
+                    idx = look + 1
+                    while idx < length and code[idx] in " \t":
+                        idx += 1
+                    continue
+                elif code[look] == '?':
+                    idx = look + 1
+                    continue
+            # Whitespace not followed by a type continuation operator -> type ends here
+            break
+
+        break
+
+    return idx
+
+
 def _strip_type_casts(code: str) -> str:
     """
     Strips Luau type cast operator expressions:
         expr :: Type -> expr
         (val :: any):Method() -> (val):Method()
-        local x = something :: number -> local x = something
+        local x = value :: (number) -> string -> local x = value
+        local y = value :: (string, number) -> boolean -> local y = value
     """
     pattern = re.compile(r"::")
     result = []
     last_idx = 0
-    length = len(code)
 
     while True:
         m = pattern.search(code, last_idx)
@@ -555,48 +684,7 @@ def _strip_type_casts(code: str) -> str:
         cast_pos = m.start()
         # Keep code before '::', trimming trailing spaces before '::'
         result.append(code[last_idx:cast_pos].rstrip(" \t"))
-
-        idx = m.end()
-        while idx < length and code[idx].isspace():
-            idx += 1
-
-        paren_depth = 0
-        brace_depth = 0
-        bracket_depth = 0
-        angle_depth = 0
-
-        while idx < length:
-            ch = code[idx]
-            if ch == '(':
-                paren_depth += 1
-            elif ch == ')':
-                if paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
-                    break
-                paren_depth = max(0, paren_depth - 1)
-            elif ch == '{':
-                brace_depth += 1
-            elif ch == '}':
-                if brace_depth == 0 and paren_depth == 0 and bracket_depth == 0 and angle_depth == 0:
-                    break
-                brace_depth = max(0, brace_depth - 1)
-            elif ch == '[':
-                bracket_depth += 1
-            elif ch == ']':
-                if bracket_depth == 0 and paren_depth == 0 and bracket_depth == 0 and angle_depth == 0:
-                    break
-                bracket_depth = max(0, bracket_depth - 1)
-            elif ch == '<':
-                angle_depth += 1
-            elif ch == '>':
-                angle_depth = max(0, angle_depth - 1)
-            elif paren_depth == 0 and brace_depth == 0 and bracket_depth == 0 and angle_depth == 0:
-                if ch in (',', ';', '\n', '\r', ':'):
-                    break
-                if not (ch.isalnum() or ch in ('_', '.', '?', '|', '&', '-', '>')):
-                    break
-            idx += 1
-
-        last_idx = idx
+        last_idx = _consume_luau_type(code, m.end())
 
     return "".join(result)
 

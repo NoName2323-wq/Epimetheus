@@ -432,13 +432,21 @@ class EngineSyntaxNormalizerTests(unittest.TestCase):
         code = (
             "local x = something :: number\n"
             "local y = (val :: any):Method()\n"
+            "local a = value :: (number) -> string\n"
+            "local b = value :: (string, number) -> boolean\n"
+            "local c = (fn :: (number) -> string):Call()\n"
             "return result :: boolean\n"
         )
         normalized = normalize_luau_syntax(code)
         self.assertIn("local x = something\n", normalized)
         self.assertIn("local y = (val):Method()\n", normalized)
+        self.assertIn("local a = value\n", normalized)
+        self.assertIn("local b = value\n", normalized)
+        self.assertIn("local c = (fn):Call()\n", normalized)
         self.assertIn("return result\n", normalized)
         self.assertNotIn("::", normalized)
+        self.assertNotIn("-> string", normalized)
+        self.assertNotIn("-> boolean", normalized)
 
 
 class EngineConstantInlinerTests(unittest.TestCase):

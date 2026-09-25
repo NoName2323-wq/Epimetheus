@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added mask protection preventing placeholder tokens (`__EPI_`) from being erroneously processed as local variable aliases.
 - **Luau Function Variable Types & Type Cast Operator Stripping**:
   - Implemented balanced parser in `engine/syntax_normalizer.py` for variable-level Luau function type signatures (`local cb: (amount: number) -> number`, `local fn: <T>(T) -> T = id`), stripping types while preserving defaults and initializers.
-  - Added `_strip_type_casts` to strip Luau type casting expressions (`expr :: Type`, `(val :: any):Method()`) down to valid Lua 5.1 syntax without corrupting parenthesized expressions or method calls.
+  - Added `_consume_luau_type` and upgraded `_strip_type_casts` to strip complex Luau type casts down to valid Lua 5.1 syntax, fully supporting function-type casts (`value :: (number) -> string`, `value :: (string, number) -> boolean`), generics (`<T>(T) -> T`), unions, and method chains (`(val :: any):Method()`).
 - **Full Lua Long-Bracket Support (`[(=*)\[` and `--[(=*)\[`)**:
   - Enhanced tokenizer across `engine/syntax_normalizer.py` and `engine/ast_optimizer.py` to support arbitrary `=` level long brackets (`[=[...]=]`, `[==[...]==]`, `--[=[...]=]`), preventing syntax errors and unwanted mutation of raw Lua code blocks.
 - **Robust Multiline, Generic, and Nested Function Type Stripping**:
