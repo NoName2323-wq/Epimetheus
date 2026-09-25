@@ -19,99 +19,7 @@ import uuid
 COMPOUND_ASSIGNMENT_OPERATORS = ("+=", "-=", "*=", "/=", "%=", "^=", "..=")
 
 
-def tokenize_lua_chunks(source: str) -> List[Tuple[str, str]]:
-    """
-    Split Lua source into (token_type, token_content) pairs.
-    Token types:
-      - 'COMMENT_LONG' (e.g. --[[...]], --[=[...]=], etc.)
-      - 'COMMENT_SHORT' (e.g. --...)
-      - 'STRING_LONG' (e.g. [[...]], [=[...]=], etc.)
-      - 'STRING_SHORT' (e.g. "...", '...')
-      - 'CODE'
-    Guarantees strings and comments are never mutated by AST/lexical transformations.
-    """
-    tokens = []
-    idx = 0
-    length = len(source)
-    code_start = 0
-
-    while idx < length:
-        # Check comments (-- or --[(=*)\[)
-        if source.startswith("--", idx):
-            m_comm = re.match(r"^--\[(=*)\[", source[idx:])
-            if m_comm:
-                if idx > code_start:
-                    tokens.append(("CODE", source[code_start:idx]))
-                eq_count = len(m_comm.group(1))
-                close_delim = "]" + ("=" * eq_count) + "]"
-                content_start = idx + len(m_comm.group(0))
-                close_pos = source.find(close_delim, content_start)
-                if close_pos == -1:
-                    tokens.append(("COMMENT_LONG", source[idx:]))
-                    return tokens
-                end_idx = close_pos + len(close_delim)
-                tokens.append(("COMMENT_LONG", source[idx:end_idx]))
-                idx = end_idx
-                code_start = idx
-                continue
-            else:
-                if idx > code_start:
-                    tokens.append(("CODE", source[code_start:idx]))
-                end_nl = source.find("\n", idx + 2)
-                if end_nl == -1:
-                    tokens.append(("COMMENT_SHORT", source[idx:]))
-                    return tokens
-                tokens.append(("COMMENT_SHORT", source[idx:end_nl]))
-                idx = end_nl
-                code_start = idx
-                continue
-
-        # Check long strings [(=*)\[
-        if source.startswith("[", idx):
-            m_str = re.match(r"^\[(=*)\[", source[idx:])
-            if m_str:
-                if idx > code_start:
-                    tokens.append(("CODE", source[code_start:idx]))
-                eq_count = len(m_str.group(1))
-                close_delim = "]" + ("=" * eq_count) + "]"
-                content_start = idx + len(m_str.group(0))
-                close_pos = source.find(close_delim, content_start)
-                if close_pos == -1:
-                    tokens.append(("STRING_LONG", source[idx:]))
-                    return tokens
-                end_idx = close_pos + len(close_delim)
-                tokens.append(("STRING_LONG", source[idx:end_idx]))
-                idx = end_idx
-                code_start = idx
-                continue
-
-        char = source[idx]
-        # Check string literal '...' or "..."
-        if char in ('"', "'"):
-            if idx > code_start:
-                tokens.append(("CODE", source[code_start:idx]))
-            quote = char
-            str_start = idx
-            idx += 1
-            while idx < length:
-                ch = source[idx]
-                if ch == "\\":
-                    idx += 2
-                    continue
-                if ch == quote:
-                    idx += 1
-                    break
-                idx += 1
-            tokens.append(("STRING_SHORT", source[str_start:idx]))
-            code_start = idx
-            continue
-
-        idx += 1
-
-    if code_start < length:
-        tokens.append(("CODE", source[code_start:]))
-
-    return tokens
+from .lua_lexer import tokenize_lua_chunks, join_lua_tokens
 
 
 def _find_compound_lhs_start(content: str, operator_index: int) -> int:
@@ -757,10 +665,15 @@ def mask_strings_and_comments(source: str) -> Tuple[str, Dict[str, str]]:
 
 
 def unmask_strings_and_comments(masked_source: str, mapping: Dict[str, str]) -> str:
-    """Restores masked strings and comments."""
+    """Restores masked strings and comments in a single pass."""
     if not mapping:
         return masked_source
-    # Sort placeholders by length descending to prevent partial match collisions
+    sample_key = next(iter(mapping.keys()))
+    m_pref = re.search(r"(__EPI_[0-9a-fA-F]+_)", sample_key)
+    if m_pref:
+        prefix = re.escape(m_pref.group(1))
+        pattern = re.compile(rf"--\[\[{prefix}CMTL_\d+__\]\]|--{prefix}CMT_\d+__|{prefix}STR_\d+__")
+        return pattern.sub(lambda m: mapping.get(m.group(0), m.group(0)), masked_source)
     for placeholder, original in sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True):
         masked_source = masked_source.replace(placeholder, original)
     return masked_source
@@ -779,6 +692,9 @@ class LuauSyntaxNormalizer:
         """
         Rewrites Luau compound assignments (a += b) into standard Lua 5.1 (a = a + b).
         """
+        if not any(operator in content for operator in COMPOUND_ASSIGNMENT_OPERATORS):
+            return content
+
         replacements: List[Tuple[int, int, str]] = []
         idx = 0
         length = len(content)
@@ -809,11 +725,17 @@ class LuauSyntaxNormalizer:
                 )
             idx = rhs_end
 
-        rewritten = content
-        for start, end, replacement in reversed(replacements):
-            rewritten = rewritten[:start] + replacement + rewritten[end:]
+        if not replacements:
+            return content
 
-        return rewritten
+        parts: List[str] = []
+        last_idx = 0
+        for start, end, replacement in replacements:
+            parts.append(content[last_idx:start])
+            parts.append(replacement)
+            last_idx = end
+        parts.append(content[last_idx:])
+        return "".join(parts)
 
     def strip_type_annotations(self, code_chunk: str) -> str:
         """
@@ -825,10 +747,15 @@ class LuauSyntaxNormalizer:
             - local z: Vector3
             - expr :: Type (type cast operator)
         """
-        chunk = _strip_type_aliases(code_chunk)
-        chunk = _strip_function_type_annotations(chunk)
-        chunk = _strip_local_type_annotations(chunk)
-        chunk = _strip_type_casts(chunk)
+        chunk = code_chunk
+        if "type" in chunk:
+            chunk = _strip_type_aliases(chunk)
+        if "function" in chunk and (":" in chunk or "<" in chunk):
+            chunk = _strip_function_type_annotations(chunk)
+        if "local" in chunk and ":" in chunk:
+            chunk = _strip_local_type_annotations(chunk)
+        if "::" in chunk:
+            chunk = _strip_type_casts(chunk)
         return chunk
 
     def normalize(self, content: str) -> str:
