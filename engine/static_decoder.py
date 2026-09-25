@@ -5,7 +5,9 @@ Directly extracts and decodes Prometheus obfuscated constant tables (Base64, Bas
 from Lua chunks without needing dynamic VM execution.
 """
 
-from typing import List, Dict, Optional, Tuple, Any
+from __future__ import annotations
+
+from typing import List, Dict, Optional, Tuple, Any, Union
 import re
 import ast
 
@@ -40,7 +42,7 @@ class StaticConstantDecoder:
         return s
 
     @staticmethod
-    def escape_for_lua(data: bytes | str) -> str:
+    def escape_for_lua(data: Union[bytes, str]) -> str:
         """
         Format a decoded string/byte sequence safely into a Lua string literal.
         """
@@ -375,7 +377,7 @@ class StaticConstantDecoder:
         lookup85: Optional[Dict[str, int]] = None,
         prefix_0: Optional[str] = None,
         prefix_1: Optional[str] = None,
-    ) -> bytes | str:
+    ) -> Union[bytes, str]:
         """
         Decode a single encoded Prometheus string using available lookups and prefixes.
         """
@@ -408,7 +410,7 @@ class StaticConstantDecoder:
 
         return encoded
 
-    def decode_all(self, source: str) -> List[bytes | str]:
+    def decode_all(self, source: str) -> List[Union[bytes, str]]:
         """
         Full static extraction & decoding pipeline for a Prometheus Lua script.
         """
@@ -427,7 +429,7 @@ class StaticConstantDecoder:
             shift, length = rotate_info
             items = self.unrotate_array(items, shift, min(length, len(items)))
 
-        decoded: List[bytes | str] = []
+        decoded: List[Union[bytes, str]] = []
         for item in items:
             if isinstance(item, str):
                 decoded.append(
@@ -445,7 +447,7 @@ class StaticConstantDecoder:
         return decoded
 
     def format_constants_table(
-        self, constants: List[bytes | str], var_name: str = "Constants"
+        self, constants: List[Union[bytes, str]], var_name: str = "Constants"
     ) -> str:
         """
         Format decoded constants into Lua table source.

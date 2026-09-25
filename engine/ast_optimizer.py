@@ -9,7 +9,9 @@ Performs:
 5. Code cleanup and normalization
 """
 
-from typing import List, Tuple, Optional, Dict
+from __future__ import annotations
+
+from typing import List, Tuple, Optional, Dict, Union
 import ast
 import re
 
@@ -133,7 +135,7 @@ def strip_prometheus_watermarks(code: str) -> str:
     return pattern.sub("-- [Epimetheus: Stripped Prometheus watermark check]", code)
 
 
-def safe_eval_math_expr(expr_str: str) -> Optional[int | float]:
+def safe_eval_math_expr(expr_str: str) -> Optional[Union[int, float]]:
     """
     Safely evaluate a mathematical expression containing only numbers and basic operators.
     Supports hex (0x...), binary (0b...), scientific notation, power (^), modulo (%).
