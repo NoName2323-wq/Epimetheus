@@ -346,6 +346,228 @@
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
     }
+
+    /* Responsive refinement: compact navigation, touch targets and smaller-screen layouts */
+    :where(a, button) { -webkit-tap-highlight-color: transparent; }
+    :where(a, button):focus-visible {
+      outline: 2px solid #c4a7ff;
+      outline-offset: 3px;
+    }
+    img { max-width: 100%; }
+    .preview-card img { display: block; width: 100%; height: auto; object-fit: contain; }
+    .install-block pre { overflow-wrap: anywhere; }
+    .code-window pre { overflow-wrap: anywhere; }
+
+    @media (max-width: 760px) {
+      html { scroll-padding-top: 118px; }
+      .topbar .nav {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "brand actions" "links links";
+        align-items: center;
+        gap: 7px 12px;
+        height: auto;
+        min-height: 0;
+        padding: 11px 0 7px;
+      }
+      .nav .brand { grid-area: brand; min-width: 0; }
+      .nav .nav-actions { grid-area: actions; gap: 8px; }
+      .nav .nav-links {
+        grid-area: links;
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        gap: 20px;
+        margin: 0;
+        padding: 3px 2px 7px;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+        justify-content: flex-start;
+      }
+      .nav .nav-links::-webkit-scrollbar { display: none; }
+      .nav-links a { flex: 0 0 auto; padding: 3px 0; }
+      .nav-github { min-height: 40px; }
+      .lang-switch { min-width: 44px; min-height: 40px; }
+      .hero { padding-top: 60px; }
+      .hero-grid { gap: 34px; }
+      .hero-art { width: 100%; min-width: 0; }
+      .terminal { transform: none; animation: none; }
+      .terminal-orbit { right: 5px; bottom: -18px; width: 68px; height: 68px; animation: none; }
+      .terminal-orbit svg { animation: none; }
+      .quick-facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        row-gap: 0;
+        margin-top: 34px;
+        padding-top: 18px;
+      }
+      .quick-fact {
+        min-width: 0;
+        padding: 11px 12px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      .quick-fact:nth-child(2n) { border-right: 0; }
+      .quick-fact:nth-child(n+3) { border-bottom: 0; padding-top: 14px; }
+      .quick-fact:first-child, .quick-fact:nth-child(3) { padding-left: 0; }
+      .quick-fact:last-child { border-right: 0; }
+      .feature-card { min-height: 0; }
+      .pipeline-shell { padding: 20px 16px; }
+      .pipeline-steps { gap: 12px 5px; }
+      .step-button { min-height: 62px; padding: 3px 2px; }
+      .step-number { width: 39px; height: 39px; }
+      .pipeline-detail { grid-template-columns: 1fr; gap: 12px; }
+      .detail-copy { padding: 9px 4px 3px; }
+      .detail-copy h3 { max-width: 27ch; font-size: clamp(19px, 4.4vw, 22px); }
+      .code-window pre {
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre;
+        overflow-wrap: normal;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+      }
+      .pipeline-controls { flex-wrap: wrap; }
+      .play-button { min-height: 44px; }
+      .bench-layout, .install-wrap { grid-template-columns: 1fr; }
+      .bench-layout { gap: 27px; }
+      .install-wrap { gap: 25px; }
+      .preview-card { padding: 8px; }
+      .preview-card img { height: auto; }
+      .output-card { min-height: 0; }
+      .copy-button { min-height: 38px; padding-inline: 10px; }
+      .install-block pre { font-size: 10.5px; line-height: 1.8; }
+      .footer-links { row-gap: 12px; }
+    }
+
+    @media (max-width: 480px) {
+      html { scroll-padding-top: 112px; }
+      .container { width: calc(100% - 30px); }
+      .topbar .nav { gap: 6px 8px; padding-top: 9px; }
+      .brand { gap: 8px; }
+      .brand-mark { flex: 0 0 32px; }
+      .brand-name { white-space: nowrap; font-size: 10.5px; letter-spacing: -.055em; }
+      .brand-version { font-size: 9px; }
+      .nav .nav-links { gap: 17px; font-size: 12px; }
+      .nav-github { width: 40px; height: 40px; min-height: 40px; }
+      .lang-switch { min-width: 42px; height: 40px; }
+      .hero { padding: 49px 0 33px; }
+      .hero-grid { gap: 29px; }
+      h1 {
+        max-width: 100%;
+        margin: 20px 0 17px;
+        font-size: clamp(32px, 8.8vw, 40px);
+        line-height: 1.17;
+        letter-spacing: -.075em;
+        overflow-wrap: normal;
+      }
+      h2 { font-size: clamp(25px, 7.2vw, 32px); line-height: 1.3; }
+      .eyebrow { max-width: 100%; font-size: 9px; letter-spacing: .055em; }
+      .hero-copy { font-size: 13.5px; line-height: 1.8; }
+      .hero-cta { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 24px; }
+      .hero-cta .button { min-width: 0; min-height: 46px; padding: 10px 9px; gap: 6px; font-size: 10.5px; }
+      .hero-note { align-items: flex-start; font-size: 10px; line-height: 1.6; }
+      .terminal { border-radius: 14px; }
+      .terminal-top { height: 43px; padding-inline: 12px; }
+      .terminal-body { padding: 15px 12px 13px; font-size: clamp(8.5px, 2.55vw, 10px); line-height: 1.85; }
+      .terminal-body .indent { padding-left: 12px; }
+      .terminal-label { font-size: 9px; }
+      .terminal-status { font-size: 8px; }
+      .terminal-footer { font-size: 8px; gap: 8px; }
+      .terminal-orbit { width: 57px; height: 57px; right: 4px; bottom: -15px; }
+      .terminal-orbit::before { inset: 8px; }
+      .terminal-orbit::after { inset: 16px; }
+      .terminal-orbit svg { width: 18px; }
+      .quick-facts { margin-top: 27px; }
+      .quick-fact { padding: 10px 9px; }
+      .quick-fact strong { font-size: 11px; }
+      .quick-fact span { font-size: 9px; line-height: 1.45; }
+      .section { padding: 67px 0; }
+      .section-head { margin-bottom: 28px; }
+      .section-kicker { font-size: 10px; margin-bottom: 10px; }
+      .section-desc { font-size: 13px; line-height: 1.8; }
+      .feature-grid, .outputs-grid { grid-template-columns: 1fr; gap: 10px; }
+      .feature-card { display: grid; grid-template-columns: 38px minmax(0, 1fr); column-gap: 13px; padding: 17px; }
+      .feature-icon { grid-column: 1; grid-row: 1 / span 2; margin: 1px 0 0; }
+      .feature-card h3 { grid-column: 2; align-self: center; margin: 0 0 5px; font-size: 13px; }
+      .feature-card p { grid-column: 2; font-size: 11px; line-height: 1.7; }
+      .feature-tag { grid-column: 2; margin-top: 10px; font-size: 9px; overflow-wrap: anywhere; }
+      .pipeline-section { padding-top: 67px; }
+      .pipeline-shell { padding: 16px 11px; border-radius: 15px; }
+      .pipeline-top { gap: 4px; margin-bottom: 20px; }
+      .pipeline-top h3 { font-size: 12px; }
+      .pipeline-top span { font-size: 10px; }
+      .pipeline-steps { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px 3px; margin-bottom: 17px; }
+      .step-button { min-height: 62px; }
+      .step-number { width: 36px; height: 36px; margin-bottom: 7px; }
+      .step-button strong { font-size: 9px; }
+      .detail-index { font-size: 10px; margin-bottom: 8px; }
+      .detail-copy h3 { font-size: 18px; margin-bottom: 9px; }
+      .detail-copy p { font-size: 12px; line-height: 1.75; margin-bottom: 13px; }
+      .detail-meta { gap: 6px; }
+      .detail-meta span { font-size: 9px; padding: 5px 7px; }
+      .code-window-head { padding: 9px 10px; font-size: 9px; }
+      .code-window pre { padding: 13px 11px; font-size: 10px; }
+      .pipeline-controls { align-items: flex-start; gap: 9px; }
+      .step-hint { align-self: center; line-height: 1.5; }
+      .fallback-note { padding: 11px; font-size: 10px; gap: 8px; }
+      .bench-layout { gap: 22px; }
+      .benchmark-grid { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
+      .metric { min-height: 124px; padding: 15px 12px; }
+      .metric strong { font-size: clamp(19px, 6vw, 24px); }
+      .metric span { font-size: 10px; }
+      .metric small { font-size: 8px; }
+      .benchmark-footnote { font-size: 9px; }
+      .preview-caption { align-items: flex-start; gap: 8px; font-size: 9px; }
+      .preview-caption span:last-child { white-space: nowrap; font-size: 8px; }
+      .output-card { display: grid; grid-template-columns: 36px minmax(0,1fr); column-gap: 12px; padding: 16px; }
+      .file-icon { grid-column: 1; grid-row: 1 / span 2; margin: 0; }
+      .output-card h3 { grid-column: 2; align-self: center; margin: 0 0 5px; font-size: 10px; overflow-wrap: anywhere; }
+      .output-card p { grid-column: 2; font-size: 10px; }
+      .install-code { border-radius: 12px; }
+      .install-tabs { padding: 12px 13px; }
+      .install-block { padding: 15px 13px; }
+      .install-block pre { font-size: 9px; line-height: 1.75; }
+      .install-label { font-size: 9px; }
+      .copy-button { min-height: 40px; }
+      .install-foot { padding: 11px 13px; font-size: 9px; overflow-wrap: anywhere; }
+      .linux-warning { font-size: 10px; }
+      .footer { padding: 31px 0 24px; }
+      .footer-copy { font-size: 9px; }
+      .footer-links { gap: 11px 15px; font-size: 10px; }
+      .footer-bottom { font-size: 8px; }
+    }
+
+    @media (max-width: 360px) {
+      .container { width: calc(100% - 26px); }
+      .brand-version { display: none; }
+      .brand-name { font-size: 10px; }
+      .nav .nav-links { gap: 14px; font-size: 11px; }
+      h1 { font-size: 31px; }
+      .hero-cta .button { font-size: 9.5px; }
+      .terminal-body { font-size: 8px; }
+      .quick-fact strong { font-size: 10px; }
+      .feature-card { padding: 14px 12px; column-gap: 10px; }
+      .benchmark-grid { gap: 7px; }
+      .metric { padding: 13px 10px; }
+    }
+
+    @media (hover: none), (pointer: coarse) {
+      .feature-card:hover { transform: none; border-color: var(--line); background: linear-gradient(145deg, rgba(26,21,39,.78), rgba(15,12,23,.78)); }
+      .button.primary:hover, .button.secondary:hover { transform: none; }
+      .nav-github:hover, .lang-switch:hover, .play-button:hover { background: initial; }
+      .ambient { filter: blur(58px); opacity: .11; animation: none; }
+      .terminal-progress span { animation: none; width: 78%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .ambient, .terminal, .terminal-orbit, .terminal-orbit svg, .terminal-progress span { animation: none !important; }
+      .js-ready .reveal { opacity: 1; transform: none; }
+    }
+
   </style>
 </head>
 <body>
@@ -543,7 +765,7 @@ total = total + 5</pre>
         </div>
         <div class="preview-card reveal">
           <div class="preview-caption"><span data-i18n data-en="A glimpse of the command-line interface" data-ru="Так выглядит интерфейс командной строки">A glimpse of the command-line interface</span><span>CLI PREVIEW / EPIMETHEUS</span></div>
-          <img src="https://raw.githubusercontent.com/NoName2323-wq/Epimetheus/refs/heads/main/assets/cli_preview.png" alt="Epimetheus command-line interface preview" loading="lazy">
+          <img src="https://raw.githubusercontent.com/NoName2323-wq/Epimetheus/refs/heads/main/assets/cli_preview.png" alt="Epimetheus command-line interface preview" loading="lazy" decoding="async">
         </div>
       </div>
     </section>
@@ -783,6 +1005,11 @@ total = total + 5</pre>
         }, 2400);
       });
 
+      // Do not keep the interactive demo timer running in a background tab.
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) stopPipeline();
+      });
+
       document.querySelectorAll('[data-copy]').forEach(function (button) {
         button.addEventListener('click', function () {
           var value = button.getAttribute('data-copy').replace(/&#10;/g, '\n');
@@ -814,7 +1041,7 @@ total = total + 5</pre>
               observer.unobserve(entry.target);
             }
           });
-        }, { threshold: 0.12 });
+        }, { threshold: 0.08, rootMargin: '0px 0px 80px 0px' });
         document.querySelectorAll('.reveal').forEach(function (element) { observer.observe(element); });
       } else {
         document.querySelectorAll('.reveal').forEach(function (element) { element.classList.add('visible'); });
