@@ -6,20 +6,28 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# The test suite supports Python 3.9+, so use an image with an available
+# CPython 3.9 build. Ubuntu 26.04 is not published in actions/python-versions
+# for CPython 3.9 yet.
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     strategy:
+      # Keep the rest of the Python matrix running if one version fails.
+      fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
